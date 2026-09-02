@@ -6,6 +6,7 @@ class ConversationMessage {
   String content;
   final ApprovalRequest? approval;
   final CodeDiffArtifact? diffArtifact;
+  final List<String>? images; // Base64 or local paths
   final DateTime timestamp;
 
   ConversationMessage({
@@ -14,6 +15,7 @@ class ConversationMessage {
     required this.content,
     this.approval,
     this.diffArtifact,
+    this.images,
     required this.timestamp,
   });
 
@@ -28,6 +30,7 @@ class ConversationMessage {
       diffArtifact: json['diff_artifact'] != null
           ? CodeDiffArtifact.fromJson(Map<String, dynamic>.from(json['diff_artifact']))
           : null,
+      images: (json['images'] as List<dynamic>?)?.map((e) => e.toString()).toList(),
       timestamp: json['timestamp'] != null
           ? DateTime.tryParse(json['timestamp'].toString()) ?? DateTime.now()
           : DateTime.now(),
@@ -41,6 +44,7 @@ class ConversationMessage {
       'content': content,
       if (approval != null) 'approval': approval!.toJson(),
       if (diffArtifact != null) 'diff_artifact': diffArtifact!.toJson(),
+      if (images != null && images!.isNotEmpty) 'images': images,
       'timestamp': timestamp.toIso8601String(),
     };
   }

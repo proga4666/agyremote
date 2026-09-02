@@ -7,6 +7,7 @@ import '../models/project.dart';
 import '../providers/chat_provider.dart';
 import '../providers/connection_provider.dart';
 import '../providers/project_provider.dart';
+import '../core/network/discovery_service.dart';
 import 'connection_dialog.dart';
 import 'conversation_view.dart';
 import 'project_create_screen.dart';
@@ -50,9 +51,11 @@ class _HomeScreenState extends State<HomeScreen> {
         titleSpacing: 0,
         title: _buildProjectSelector(context, projProvider, chatProvider),
         actions: [
+          // Active Host PC Switcher Pill
+          _buildHostSwitcherPill(context, connProvider),
           // New Project Button
           IconButton(
-            icon: const Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.googleBlue),
+            icon: const Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.googleBlue, size: 20),
             tooltip: 'New Project (Select Host Folder)',
             onPressed: () {
               Navigator.push(
@@ -63,20 +66,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           // New Conversation Button
           IconButton(
-            icon: const Icon(Icons.add_comment_outlined, color: AntigravityTheme.googleGreen),
+            icon: const Icon(Icons.add_comment_outlined, color: AntigravityTheme.googleGreen, size: 20),
             tooltip: 'New Task / Session',
             onPressed: () => _showNewConversationDialog(context, projProvider, chatProvider),
-          ),
-          // Connection Dialog Button
-          IconButton(
-            icon: Icon(
-              Icons.sensors,
-              color: connProvider.isConnected
-                  ? AntigravityTheme.googleGreen
-                  : AntigravityTheme.googleAmber,
-            ),
-            tooltip: 'Daemon Bridge Settings',
-            onPressed: () => ConnectionDialog.show(context),
           ),
         ],
       ),
@@ -534,6 +526,238 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildHostSwitcherPill(BuildContext context, ConnectionProvider conn) {
+    final isConnected = conn.isConnected;
+    final hostLabel = conn.discoveredHosts.isNotEmpty
+        ? (conn.discoveredHosts.firstWhere(
+            (h) => h.ipAddress == conn.hostAddress,
+            orElse: () => conn.discoveredHosts.first,
+          ).hostName)
+        : conn.hostAddress;
+
+    return InkWell(
+      onTap: () => _showHostSwitcherModal(context, conn),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isConnected
+              ? AntigravityTheme.surfaceContainerHigh
+              : AntigravityTheme.googleRed.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isConnected
+                ? AntigravityTheme.googleGreen.withValues(alpha: 0.4)
+                : AntigravityTheme.googleRed.withValues(alpha: 0.4),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isConnected
+                    ? AntigravityTheme.googleGreen
+                    : AntigravityTheme.googleAmber,
+              ),
+            ),
+            const SizedBox(width: 5),
+            Icon(
+              Icons.computer_rounded,
+              size: 13,
+              color: isConnected ? AntigravityTheme.googleBlue : AntigravityTheme.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 80),
+              child: Text(
+                hostLabel,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Icon(Icons.arrow_drop_down, size: 14, color: AntigravityTheme.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showHostSwitcherModal(BuildContext context, ConnectionProvider conn) {
+    conn.scanForHosts();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AntigravityTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (modalCtx) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.devices_rounded, color: AntigravityTheme.googleBlue, size: 20),
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'ONLINE HOST WORKSTATIONS',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                              color: AntigravityTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.refresh, size: 18, color: AntigravityTheme.googleBlue),
+                          tooltip: 'Rescan Network for PCs',
+                          onPressed: () {
+                            conn.scanForHosts();
+                            setState(() {});
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    if (conn.discoveredHosts.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AntigravityTheme.surfaceContainer,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AntigravityTheme.borderSubtle),
+                        ),
+                        child: Column(
+                          children: [
+                            const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AntigravityTheme.googleBlue),
+                            ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'Scanning local Wi-Fi for Antigravity PCs...',
+                              style: TextStyle(fontSize: 12, color: AntigravityTheme.textSecondary),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Active: ${conn.hostAddress}:${conn.port}',
+                              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AntigravityTheme.googleGreen),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      ...conn.discoveredHosts.map((DiscoveredHost h) {
+                        final isCurrent = conn.hostAddress == h.ipAddress;
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          decoration: BoxDecoration(
+                            color: isCurrent
+                                ? AntigravityTheme.googleGreen.withValues(alpha: 0.12)
+                                : AntigravityTheme.surfaceContainer,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: isCurrent ? AntigravityTheme.googleGreen : AntigravityTheme.borderSubtle,
+                            ),
+                          ),
+                          child: ListTile(
+                            dense: true,
+                            leading: Icon(
+                              Icons.computer_rounded,
+                              color: isCurrent ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                              size: 22,
+                            ),
+                            title: Row(
+                              children: [
+                                Text(
+                                  h.hostName,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.w600,
+                                    color: isCurrent ? AntigravityTheme.googleGreen : Colors.white,
+                                  ),
+                                ),
+                                if (isCurrent) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: AntigravityTheme.googleGreen,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text(
+                                      'CONNECTED',
+                                      style: TextStyle(fontSize: 9, color: Colors.black, fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              '${h.ipAddress}:${h.port} • Auto-Discovered',
+                              style: const TextStyle(fontSize: 11, color: AntigravityTheme.textMuted, fontFamily: 'monospace'),
+                            ),
+                            trailing: isCurrent
+                                ? const Icon(Icons.check_circle, color: AntigravityTheme.googleGreen, size: 18)
+                                : const Icon(Icons.chevron_right, size: 18, color: AntigravityTheme.textSecondary),
+                            onTap: () {
+                              conn.connectToDiscoveredHost(h);
+                              Navigator.pop(modalCtx);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Switched to PC: ${h.hostName} (${h.ipAddress})'),
+                                  backgroundColor: AntigravityTheme.surfaceContainerHigh,
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      }),
+
+                    const SizedBox(height: 10),
+                    // Manual IP & Settings Button
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AntigravityTheme.border),
+                        minimumSize: const Size.fromHeight(40),
+                      ),
+                      icon: const Icon(Icons.settings_ethernet, size: 16, color: AntigravityTheme.googleBlue),
+                      label: const Text('Custom IP / Tailscale / Settings', style: TextStyle(fontSize: 12, color: AntigravityTheme.googleBlue)),
+                      onPressed: () {
+                        Navigator.pop(modalCtx);
+                        ConnectionDialog.show(context);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

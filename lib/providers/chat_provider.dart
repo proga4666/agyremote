@@ -187,13 +187,15 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  void sendPrompt(String text) {
-    if (activeConversation == null || text.trim().isEmpty) return;
+  void sendPrompt(String text, {List<String>? images}) {
+    if (activeConversation == null) return;
+    if (text.trim().isEmpty && (images == null || images.isEmpty)) return;
 
     final userMsg = ConversationMessage(
       id: _uuid.v4(),
       sender: 'user',
-      content: text.trim(),
+      content: text.trim().isEmpty ? 'Attached ${images?.length ?? 1} photo(s)' : text.trim(),
+      images: images,
       timestamp: DateTime.now(),
     );
 
@@ -205,6 +207,7 @@ class ChatProvider extends ChangeNotifier {
     bridge.send('send_prompt', {
       'conversation_id': activeConversation!.id,
       'text': text.trim(),
+      if (images != null && images.isNotEmpty) 'images': images,
     });
   }
 

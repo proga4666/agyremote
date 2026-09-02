@@ -548,7 +548,8 @@ async def handle_client(websocket):
                 elif action == "send_prompt":
                     conv_id = data.get("conversation_id")
                     prompt_text = data.get("text", "")
-                    print(f"[Daemon] 💬 Prompt for conversation {conv_id}: {prompt_text}")
+                    raw_images = data.get("images", [])
+                    print(f"[Daemon] 💬 Prompt for conversation {conv_id} ({len(raw_images)} image(s)): {prompt_text}")
 
                     conv_obj = conversations.get(conv_id)
                     if not conv_obj:
@@ -561,19 +562,58 @@ async def handle_client(websocket):
                         }
                         conversations[conv_id] = conv_obj
 
+                    proj = get_project_by_id(conv_obj.get("project_id", ""))
+                    cwd = proj["path"] if proj and os.path.exists(proj["path"]) else os.getcwd()
+
+                    # Save uploaded images to disk
+                    saved_image_paths = []
+                    if raw_images:
+                        import base64
+                        brain_upload_dir = os.path.join(ANTIGRAVITY_BRAIN_DIR, conv_id, ".user_uploaded")
+                        proj_upload_dir = os.path.join(cwd, ".user_uploaded")
+                        os.makedirs(brain_upload_dir, exist_ok=True)
+                        os.makedirs(proj_upload_dir, exist_ok=True)
+
+                        for idx, b64_str in enumerate(raw_images):
+                            try:
+                                if "," in b64_str:
+                                    b64_str = b64_str.split(",")[1]
+                                img_bytes = base64.b64decode(b64_str)
+                                img_filename = f"upload_{int(datetime.now().timestamp() * 1000)}_{idx}.png"
+                                
+                                brain_img_path = os.path.join(brain_upload_dir, img_filename)
+                                proj_img_path = os.path.join(proj_upload_dir, img_filename)
+                                
+                                with open(brain_img_path, "wb") as f:
+                                    f.write(img_bytes)
+                                with open(proj_img_path, "wb") as f:
+                                    f.write(img_bytes)
+                                
+                                saved_image_paths.append(brain_img_path.replace("\\", "/"))
+                                print(f"[Daemon] 🖼️ Saved uploaded image to: {brain_img_path}")
+                            except Exception as e:
+                                print(f"[Daemon] Error saving image: {e}")
+
                     user_msg = {
                         "id": f"msg_{int(datetime.now().timestamp() * 1000)}",
                         "sender": "user",
-                        "content": prompt_text,
+                        "content": prompt_text if prompt_text else f"Attached {len(saved_image_paths)} photo(s)",
+                        "images": raw_images if len(raw_images) <= 3 else raw_images[:3],
                         "timestamp": datetime.now().isoformat()
                     }
                     conv_obj["messages"].append(user_msg)
                     save_conversations()
 
-                    proj = get_project_by_id(conv_obj.get("project_id", ""))
-                    cwd = proj["path"] if proj and os.path.exists(proj["path"]) else os.getcwd()
+                    # Format prompt with image references for Antigravity AI
+                    final_agent_prompt = prompt_text
+                    if saved_image_paths:
+                        img_refs = "\n".join([f"- {p}" for p in saved_image_paths])
+                        if final_agent_prompt:
+                            final_agent_prompt = f"Please analyze the attached image(s):\n{img_refs}\n\nInstructions: {final_agent_prompt}"
+                        else:
+                            final_agent_prompt = f"Please inspect the attached image(s):\n{img_refs}"
 
-                    await run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd)
+                    await run_antigravity_cli_agent(websocket, conv_id, final_agent_prompt, cwd, image_paths=saved_image_paths)
 
                 elif action == "resolve_approval":
                     approval_id = data.get("approval_id")
@@ -641,11 +681,12 @@ async def handle_client(websocket):
     except Exception as e:
         print(f"[Daemon] Client disconnected: {e}")
 
-# --- Real Antigravity 2.0 CLI Agent Bridge with Session Resume ---
-async def run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd):
+# --- Real Antigravity 2.0 CLI Agent Bridge with Session Resume & Vision ---
+async def run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd, image_paths=None):
     sync_antigravity_auth()
     
-    thought_intro = f"Workspace: `{cwd}` • Resuming Antigravity Session `{conv_id}`"
+    img_note = f" (with {len(image_paths)} photo(s))" if image_paths else ""
+    thought_intro = f"Workspace: `{cwd}` • Resuming Antigravity Session `{conv_id}`{img_note}"
     await websocket.send(json.dumps({
         "event": "agent_stream",
         "conversation_id": conv_id,
