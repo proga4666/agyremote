@@ -1,0 +1,80 @@
+{
+  "name": "antigravity-remote-control",
+  "displayName": "Antigravity Remote Companion",
+  "description": "Control and stream Google Antigravity 2.0 autonomous agent sessions from your mobile phone.",
+  "version": "1.0.0",
+  "publisher": "antigravity",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:antigravityRemoteView"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "antigravity-remote-sidebar",
+          "title": "Antigravity Remote",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "antigravity-remote-sidebar": [
+        {
+          "type": "webview",
+          "id": "antigravityRemoteView",
+          "name": "Host Daemon Manager"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "antigravityRemote.startServer",
+        "title": "Start Host Daemon",
+        "category": "Antigravity Remote"
+      },
+      {
+        "command": "antigravityRemote.stopServer",
+        "title": "Stop Host Daemon",
+        "category": "Antigravity Remote"
+      },
+      {
+        "command": "antigravityRemote.restartServer",
+        "title": "Restart Host Daemon",
+        "category": "Antigravity Remote"
+      },
+      {
+        "command": "antigravityRemote.showPanel",
+        "title": "Open Remote Manager",
+        "category": "Antigravity Remote"
+      }
+    ],
+    "configuration": {
+      "title": "Antigravity Remote",
+      "properties": {
+        "antigravityRemote.autostart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically launch host daemon server when Antigravity starts."
+        },
+        "antigravityRemote.port": {
+          "type": "number",
+          "default": 7800,
+          "description": "WebSocket Port for Antigravity Remote Companion."
+        },
+        "antigravityRemote.discoveryPort": {
+          "type": "number",
+          "default": 7801,
+          "description": "UDP Auto-Discovery Port for local Wi-Fi pairing."
+        }
+      }
+    }
+  }
+}
