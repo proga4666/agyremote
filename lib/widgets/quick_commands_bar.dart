@@ -247,12 +247,15 @@ class _AllCommandsSheetContent extends StatelessWidget {
                     final color = _getColor(cmd.colorTag);
                     return Container(
                       margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
+                      child: Material(
                         color: AntigravityTheme.surfaceContainer,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AntigravityTheme.borderSubtle),
-                      ),
-                      child: ListTile(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AntigravityTheme.borderSubtle),
+                          ),
+                          child: ListTile(
                         dense: true,
                         leading: Container(
                           padding: const EdgeInsets.all(6),
@@ -316,8 +319,10 @@ class _AllCommandsSheetContent extends StatelessWidget {
                           child: const Text('Run', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
                       ),
-                    );
-                  }),
+                    ),
+                  ),
+                );
+              }),
                 ],
               ),
             ),

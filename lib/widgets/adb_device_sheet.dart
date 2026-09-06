@@ -147,24 +147,27 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
                 final isSelected = provider.selectedAdbDevice?.serial == dev.serial;
                 return Container(
                   margin: const EdgeInsets.only(bottom: 6),
-                  decoration: BoxDecoration(
+                  child: Material(
                     color: isSelected
                         ? AntigravityTheme.googlePurple.withValues(alpha: 0.12)
                         : AntigravityTheme.surfaceContainer,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isSelected ? AntigravityTheme.googlePurple : AntigravityTheme.borderSubtle,
-                      width: isSelected ? 1.5 : 1,
-                    ),
-                  ),
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                    leading: Icon(
-                      dev.isWireless ? Icons.wifi_tethering : Icons.usb_rounded,
-                      color: dev.isConnected ? AntigravityTheme.googleGreen : AntigravityTheme.textMuted,
-                      size: 20,
-                    ),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isSelected ? AntigravityTheme.googlePurple : AntigravityTheme.borderSubtle,
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                        leading: Icon(
+                          dev.isWireless ? Icons.wifi_tethering : Icons.usb_rounded,
+                          color: dev.isConnected ? AntigravityTheme.googleGreen : AntigravityTheme.textMuted,
+                          size: 20,
+                        ),
                     title: Row(
                       children: [
                         Expanded(
@@ -226,8 +229,10 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
                     ),
                     onTap: () => provider.selectAdbDevice(dev),
                   ),
-                );
-              }),
+                ),
+              ),
+            );
+          }),
 
             const SizedBox(height: 16),
             const Text(
