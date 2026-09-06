@@ -12,6 +12,7 @@ import '../models/approval.dart';
 import '../models/conversation.dart';
 import '../providers/chat_provider.dart';
 import 'diff_viewer_screen.dart';
+import 'plan_inspector_screen.dart';
 
 class ConversationView extends StatefulWidget {
   const ConversationView({super.key});
@@ -197,6 +198,13 @@ class _ConversationViewState extends State<ConversationView> {
 
     return Column(
       children: [
+        // Engine Origin Pill Header (Antigravity 2.0 vs Desktop IDE)
+        _buildSessionOriginHeader(activeConv),
+
+        // Active Plan / Walkthrough Top Banner
+        if (chat.activePlanArtifact != null || chat.activeWalkthroughArtifact != null)
+          _buildActivePlanBanner(context, chat),
+
         // Message Stream Feed
         Expanded(
           child: ListView.builder(
@@ -214,12 +222,155 @@ class _ConversationViewState extends State<ConversationView> {
           ),
         ),
 
-        // Quick Suggestion Chips
-        if (activeConv.messages.length <= 2) _buildQuickSuggestionRow(chat),
+        // Multi-Step Workflow Task Chips
+        _buildMultiStepWorkflowRow(chat),
 
         // Prompt Input Bar with Image Attachments
         _buildPromptBar(context, chat),
       ],
+    );
+  }
+
+  Widget _buildSessionOriginHeader(Conversation conv) {
+    final isDaemon = conv.isDaemon;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: AntigravityTheme.surfaceContainer.withValues(alpha: 0.6),
+        border: const Border(
+          bottom: BorderSide(color: AntigravityTheme.borderSubtle),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: isDaemon
+                  ? AntigravityTheme.googleGreen.withValues(alpha: 0.15)
+                  : AntigravityTheme.googleBlue.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: isDaemon
+                    ? AntigravityTheme.googleGreen.withValues(alpha: 0.3)
+                    : AntigravityTheme.googleBlue.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isDaemon ? Icons.smart_toy_outlined : Icons.laptop_chromebook_rounded,
+                  size: 12,
+                  color: isDaemon ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isDaemon ? 'Antigravity 2.0 Headless' : 'Desktop IDE Session',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.bold,
+                    color: isDaemon ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              conv.title,
+              style: const TextStyle(fontSize: 11, color: AntigravityTheme.textSecondary, fontWeight: FontWeight.w500),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(
+            DateFormat('MMM d, HH:mm').format(conv.createdAt),
+            style: const TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActivePlanBanner(BuildContext context, ChatProvider chat) {
+    final plan = chat.activePlanArtifact;
+    final walkthrough = chat.activeWalkthroughArtifact;
+    final totalArtifacts = chat.currentArtifacts.length;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AntigravityTheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: AntigravityTheme.googleBlue.withValues(alpha: 0.4),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: AntigravityTheme.googleBlue.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(Icons.architecture_rounded, color: AntigravityTheme.googleBlue, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      plan != null ? 'Implementation Plan Ready' : 'Walkthrough Artifact Ready',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: AntigravityTheme.googleGreen.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '$totalArtifacts artifact(s)',
+                        style: const TextStyle(fontSize: 9, color: AntigravityTheme.googleGreen, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  plan != null ? plan.name : (walkthrough?.name ?? 'Artifacts available'),
+                  style: const TextStyle(fontSize: 10, color: AntigravityTheme.textSecondary, fontFamily: 'monospace'),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AntigravityTheme.googleBlue,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size.zero,
+            ),
+            icon: const Icon(Icons.visibility_outlined, size: 14),
+            label: const Text('Inspect Plan', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PlanInspectorScreen(initialArtifact: plan ?? walkthrough),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
@@ -256,31 +407,37 @@ class _ConversationViewState extends State<ConversationView> {
     );
   }
 
-  Widget _buildQuickSuggestionRow(ChatProvider chat) {
-    final suggestions = [
-      '⚡ Run tests & fix failing cases',
-      '🔍 Analyze project architecture',
-      '🛠️ Refactor controller methods',
+  Widget _buildMultiStepWorkflowRow(ChatProvider chat) {
+    final workflows = [
+      {'key': 'refactor', 'icon': Icons.cleaning_services_rounded, 'label': 'Multi-Step Refactor', 'color': AntigravityTheme.googleBlue},
+      {'key': 'build_test', 'icon': Icons.play_circle_outline_rounded, 'label': 'Build & Test Suite', 'color': AntigravityTheme.googleGreen},
+      {'key': 'security_audit', 'icon': Icons.security_rounded, 'label': 'Security & Config Audit', 'color': AntigravityTheme.googleAmber},
+      {'key': 'implementation_plan', 'icon': Icons.architecture_rounded, 'label': 'Generate Plan', 'color': Colors.purpleAccent},
     ];
 
     return Container(
-      height: 38,
+      height: 36,
       margin: const EdgeInsets.only(bottom: 6),
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: suggestions.length,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        itemCount: workflows.length,
         separatorBuilder: (_, index) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
-          final s = suggestions[i];
+          final wf = workflows[i];
+          final color = wf['color'] as Color;
           return ActionChip(
-            label: Text(s, style: const TextStyle(fontSize: 11, color: AntigravityTheme.textPrimary)),
+            avatar: Icon(wf['icon'] as IconData, size: 14, color: color),
+            label: Text(
+              wf['label'] as String,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AntigravityTheme.textPrimary),
+            ),
             backgroundColor: AntigravityTheme.surfaceContainer,
-            side: const BorderSide(color: AntigravityTheme.border),
-            onPressed: () {
-              final cleanText = s.substring(3);
-              chat.sendPrompt(cleanText);
-            },
+            side: BorderSide(color: color.withValues(alpha: 0.3)),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            onPressed: chat.isStreaming
+                ? null
+                : () => chat.sendMultiStepWorkflow(wf['key'] as String),
           );
         },
       ),

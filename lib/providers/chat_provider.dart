@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../core/network/bridge_client.dart';
 import '../models/approval.dart';
+import '../models/artifact.dart';
 import '../models/conversation.dart';
 
 class ChatProvider extends ChangeNotifier {
@@ -13,6 +14,11 @@ class ChatProvider extends ChangeNotifier {
   bool isStreaming = false;
   String? currentStreamingConvId;
   String? _currentProjectId;
+  ConversationSource? sourceFilter;
+
+  List<BrainArtifact> currentArtifacts = [];
+  BrainArtifact? activePlanArtifact;
+  BrainArtifact? activeWalkthroughArtifact;
 
   ChatProvider({required this.bridge}) {
     bridge.events.listen(_handleEvents);
@@ -23,9 +29,36 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
-  List<Conversation> getConversationsForProject(String? projectId) {
-    if (projectId == null || projectId.isEmpty) return conversations;
-    return conversations.where((c) => c.projectId == projectId).toList();
+  void setSourceFilter(ConversationSource? filter) {
+    sourceFilter = filter;
+    notifyListeners();
+  }
+
+  List<Conversation> get daemonConversations =>
+      conversations.where((c) => c.isDaemon).toList();
+
+  List<Conversation> get desktopIdeConversations =>
+      conversations.where((c) => c.isDesktopIde).toList();
+
+  List<Conversation> getConversationsForProject(String? projectId, {ConversationSource? filter}) {
+    final effectiveFilter = filter ?? sourceFilter;
+    var list = (projectId == null || projectId.isEmpty)
+        ? conversations
+        : conversations.where((c) => c.projectId == projectId).toList();
+    if (effectiveFilter != null) {
+      list = list.where((c) => c.source == effectiveFilter).toList();
+    }
+    return list;
+  }
+
+  int countForProjectAndSource(String? projectId, ConversationSource? source) {
+    var list = (projectId == null || projectId.isEmpty)
+        ? conversations
+        : conversations.where((c) => c.projectId == projectId).toList();
+    if (source != null) {
+      list = list.where((c) => c.source == source).toList();
+    }
+    return list.length;
   }
 
   void syncWithSelectedProject(String? projectId) {
@@ -36,10 +69,10 @@ class ChatProvider extends ChangeNotifier {
     if (projectConvs.isNotEmpty) {
       if (activeConversation == null || activeConversation!.projectId != projectId) {
         activeConversation = projectConvs.first;
+        fetchConversationArtifacts(activeConversation!.id);
         notifyListeners();
       }
     } else {
-      // Create initial conversation for this project
       createConversation(projectId, 'Initial Task');
     }
   }
@@ -52,11 +85,9 @@ class ChatProvider extends ChangeNotifier {
             .map((c) => Conversation.fromJson(Map<String, dynamic>.from(c)))
             .toList();
 
-        // Sort most recent first
         loadedConvs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         conversations = loadedConvs;
 
-        // Keep active conversation or select first matching project
         if (activeConversation != null) {
           final match = conversations.where((c) => c.id == activeConversation!.id);
           if (match.isNotEmpty) {
@@ -70,6 +101,10 @@ class ChatProvider extends ChangeNotifier {
           activeConversation = projMatch.isNotEmpty ? projMatch.first : (conversations.isNotEmpty ? conversations.first : null);
         } else if (conversations.isNotEmpty) {
           activeConversation = conversations.first;
+        }
+
+        if (activeConversation != null) {
+          fetchConversationArtifacts(activeConversation!.id);
         }
 
         notifyListeners();
@@ -87,6 +122,7 @@ class ChatProvider extends ChangeNotifier {
             conversations[index] = conv;
           }
           activeConversation = conv;
+          fetchConversationArtifacts(conv.id);
           notifyListeners();
         }
         break;
@@ -103,6 +139,9 @@ class ChatProvider extends ChangeNotifier {
 
       case 'agent_stream_end':
         isStreaming = false;
+        if (activeConversation != null) {
+          fetchConversationArtifacts(activeConversation!.id);
+        }
         notifyListeners();
         break;
 
@@ -126,6 +165,33 @@ class ChatProvider extends ChangeNotifier {
         }
         break;
 
+      case 'artifact_updated':
+        if (event['artifact'] != null) {
+          final art = BrainArtifact.fromJson(Map<String, dynamic>.from(event['artifact']));
+          _updateOrAddArtifact(art);
+        }
+        break;
+
+      case 'conversation_artifacts':
+        final rawArts = event['artifacts'] as List<dynamic>? ?? [];
+        currentArtifacts = rawArts
+            .map((a) => BrainArtifact.fromJson(Map<String, dynamic>.from(a)))
+            .toList();
+        _updateActivePlanAndWalkthrough();
+        notifyListeners();
+        break;
+
+      case 'artifact_content':
+        final artName = event['name']?.toString() ?? '';
+        final content = event['content']?.toString() ?? '';
+        final index = currentArtifacts.indexWhere((a) => a.name == artName);
+        if (index != -1) {
+          currentArtifacts[index] = currentArtifacts[index].copyWith(content: content);
+          _updateActivePlanAndWalkthrough();
+          notifyListeners();
+        }
+        break;
+
       case 'approval_resolved':
         final approvalId = event['approval_id']?.toString();
         final approved = event['approved'] == true;
@@ -136,24 +202,71 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
-  Conversation createConversation(String projectId, String title) {
+  void _updateOrAddArtifact(BrainArtifact art) {
+    final idx = currentArtifacts.indexWhere((a) => a.name == art.name);
+    if (idx != -1) {
+      currentArtifacts[idx] = art;
+    } else {
+      currentArtifacts.insert(0, art);
+    }
+    _updateActivePlanAndWalkthrough();
+    notifyListeners();
+  }
+
+  void _updateActivePlanAndWalkthrough() {
+    final plans = currentArtifacts.where((a) => a.type == ArtifactType.plan).toList();
+    activePlanArtifact = plans.isNotEmpty ? plans.first : null;
+
+    final walks = currentArtifacts.where((a) => a.type == ArtifactType.walkthrough).toList();
+    activeWalkthroughArtifact = walks.isNotEmpty ? walks.first : null;
+  }
+
+  void fetchConversationArtifacts([String? convId]) {
+    final targetId = convId ?? activeConversation?.id;
+    if (targetId == null) return;
+    bridge.send('get_conversation_artifacts', {'conversation_id': targetId});
+  }
+
+  void loadArtifactContent(String convId, String artifactName, [String? filePath]) {
+    final payload = <String, dynamic>{
+      'conversation_id': convId,
+      'name': artifactName,
+    };
+    if (filePath != null) {
+      payload['file_path'] = filePath;
+    }
+    bridge.send('get_artifact_content', payload);
+  }
+
+  Conversation createConversation(
+    String projectId,
+    String title, {
+    ConversationSource source = ConversationSource.daemon,
+  }) {
     final newId = 'conv_${_uuid.v4().substring(0, 8)}';
     final conv = Conversation(
       id: newId,
       projectId: projectId,
       title: title.trim().isEmpty ? 'Autonomous Task' : title.trim(),
+      source: source,
+      engine: source == ConversationSource.desktopIde ? 'Desktop IDE' : 'Antigravity 2.0',
       messages: [],
     );
 
     conversations.insert(0, conv);
     activeConversation = conv;
     _currentProjectId = projectId;
+    currentArtifacts.clear();
+    activePlanArtifact = null;
+    activeWalkthroughArtifact = null;
     notifyListeners();
 
     bridge.send('create_conversation', {
       'id': newId,
       'project_id': projectId,
       'title': conv.title,
+      'source': source == ConversationSource.desktopIde ? 'desktop_ide' : 'daemon',
+      'engine': conv.engine,
     });
 
     return conv;
@@ -164,6 +277,9 @@ class ChatProvider extends ChangeNotifier {
     if (activeConversation?.id == convId) {
       final projectConvs = getConversationsForProject(_currentProjectId);
       activeConversation = projectConvs.isNotEmpty ? projectConvs.first : (conversations.isNotEmpty ? conversations.first : null);
+      if (activeConversation != null) {
+        fetchConversationArtifacts(activeConversation!.id);
+      }
     }
     notifyListeners();
 
@@ -175,6 +291,10 @@ class ChatProvider extends ChangeNotifier {
   void selectConversation(Conversation conv) {
     activeConversation = conv;
     _currentProjectId = conv.projectId;
+    currentArtifacts.clear();
+    activePlanArtifact = null;
+    activeWalkthroughArtifact = null;
+    fetchConversationArtifacts(conv.id);
     notifyListeners();
   }
 
@@ -183,6 +303,10 @@ class ChatProvider extends ChangeNotifier {
     if (match.isNotEmpty) {
       activeConversation = match.first;
       _currentProjectId = match.first.projectId;
+      currentArtifacts.clear();
+      activePlanArtifact = null;
+      activeWalkthroughArtifact = null;
+      fetchConversationArtifacts(convId);
       notifyListeners();
     }
   }
@@ -209,6 +333,31 @@ class ChatProvider extends ChangeNotifier {
       'text': text.trim(),
       if (images != null && images.isNotEmpty) 'images': images,
     });
+  }
+
+  void sendMultiStepWorkflow(String workflowType) {
+    String prompt = '';
+    switch (workflowType) {
+      case 'refactor':
+        prompt =
+            'Please initiate a multi-step codebase refactor: analyze code quality, clean unused imports/dependencies, optimize component architecture, and verify lint compliance.';
+        break;
+      case 'build_test':
+        prompt =
+            'Please run the project build pipeline and test suite: compile the workspace, execute automated tests, inspect error outputs, and report verification status.';
+        break;
+      case 'security_audit':
+        prompt =
+            'Please perform a full security and dependency audit: verify packages, check file permissions, ensure secrets/tokens are safely configured, and report risks.';
+        break;
+      case 'implementation_plan':
+        prompt =
+            'Please create an implementation_plan.md artifact for the current project: outline user review items, open questions, proposed architecture changes, and a verification plan.';
+        break;
+      default:
+        prompt = 'Please inspect the workspace and perform necessary maintenance tasks.';
+    }
+    sendPrompt(prompt);
   }
 
   void resolveApproval(String approvalId, bool approved) {

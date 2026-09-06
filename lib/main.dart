@@ -5,6 +5,7 @@ import 'core/theme/app_theme.dart';
 import 'providers/chat_provider.dart';
 import 'providers/connection_provider.dart';
 import 'providers/project_provider.dart';
+import 'providers/quick_command_provider.dart';
 import 'screens/home_screen.dart';
 
 void main() {
@@ -23,6 +24,9 @@ void main() {
           create: (_) => ProjectProvider(bridge: bridge)..fetchProjects(),
         ),
         ChangeNotifierProvider(create: (_) => ChatProvider(bridge: bridge)),
+        ChangeNotifierProvider(
+          create: (_) => QuickCommandProvider(bridge: bridge),
+        ),
       ],
       child: const AntigravityRemoteApp(),
     ),

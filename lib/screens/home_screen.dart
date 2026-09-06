@@ -10,7 +10,11 @@ import '../providers/project_provider.dart';
 import '../core/network/discovery_service.dart';
 import 'connection_dialog.dart';
 import 'conversation_view.dart';
+import 'daemon_dashboard_screen.dart';
+import 'plan_inspector_screen.dart';
 import 'project_create_screen.dart';
+import '../widgets/adb_device_sheet.dart';
+import '../widgets/quick_commands_bar.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -53,9 +57,55 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           // Active Host PC Switcher Pill
           _buildHostSwitcherPill(context, connProvider),
+          // Plan Inspector Button (if plan exists)
+          if (chatProvider.activePlanArtifact != null)
+            IconButton(
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.architecture_rounded, color: AntigravityTheme.googleGreen, size: 20),
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AntigravityTheme.googleGreen,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              tooltip: 'Inspect Implementation Plan',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const PlanInspectorScreen()),
+                );
+              },
+            ),
+          // Daemon Dashboard Button
+          IconButton(
+            icon: const Icon(Icons.dns_rounded, color: AntigravityTheme.googleBlue, size: 20),
+            tooltip: 'Headless Daemon Manager',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DaemonDashboardScreen()),
+              );
+            },
+          ),
+          // Wireless ADB Devices
+          IconButton(
+            icon: const Icon(Icons.install_mobile_rounded, color: AntigravityTheme.googlePurple, size: 20),
+            tooltip: 'Wireless Debug & ADB Devices',
+            onPressed: () => AdbDeviceSheet.show(context),
+          ),
           // New Project Button
           IconButton(
-            icon: const Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.googleBlue, size: 20),
+            icon: const Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.textSecondary, size: 20),
             tooltip: 'New Project (Select Host Folder)',
             onPressed: () {
               Navigator.push(
@@ -76,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           if (!connProvider.isConnected) _buildDisconnectedBanner(context, connProvider),
+          const QuickCommandsBar(),
           const Expanded(child: ConversationView()),
         ],
       ),
@@ -274,6 +325,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  // Segmented Source Engine Tabs
+                  _buildSourceTabs(context, chatProvider),
                 ],
               ),
             ),
@@ -382,33 +436,69 @@ class _HomeScreenState extends State<HomeScreen> {
                                         const Padding(
                                           padding: EdgeInsets.all(12),
                                           child: Text(
-                                            'No sessions in this folder yet.',
+                                            'No sessions match current filter.',
                                             style: TextStyle(fontSize: 11, color: AntigravityTheme.textMuted),
                                           ),
                                         )
                                       else
                                         ...convs.map((Conversation c) {
                                           final isCurrentConv = c.id == chatProvider.activeConversation?.id;
+                                          final isDaemon = c.isDaemon;
                                           return ListTile(
                                             dense: true,
                                             selected: isCurrentConv,
-                                            selectedTileColor: AntigravityTheme.googleGreen.withValues(alpha: 0.12),
+                                            selectedTileColor: isDaemon
+                                                ? AntigravityTheme.googleGreen.withValues(alpha: 0.12)
+                                                : AntigravityTheme.googleBlue.withValues(alpha: 0.12),
                                             leading: Icon(
-                                              Icons.chat_bubble_outline_rounded,
-                                              color: isCurrentConv ? AntigravityTheme.googleGreen : AntigravityTheme.textSecondary,
+                                              isDaemon ? Icons.smart_toy_outlined : Icons.laptop_chromebook_rounded,
+                                              color: isCurrentConv
+                                                  ? (isDaemon ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue)
+                                                  : AntigravityTheme.textSecondary,
                                               size: 16,
                                             ),
-                                            title: Text(
-                                              c.title,
-                                              style: TextStyle(
-                                                fontSize: 12.5,
-                                                fontWeight: isCurrentConv ? FontWeight.bold : FontWeight.normal,
-                                                color: isCurrentConv ? AntigravityTheme.googleGreen : AntigravityTheme.textPrimary,
-                                              ),
-                                              overflow: TextOverflow.ellipsis,
+                                            title: Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    c.title,
+                                                    style: TextStyle(
+                                                      fontSize: 12.5,
+                                                      fontWeight: isCurrentConv ? FontWeight.bold : FontWeight.normal,
+                                                      color: isCurrentConv
+                                                          ? (isDaemon ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue)
+                                                          : AntigravityTheme.textPrimary,
+                                                    ),
+                                                    overflow: TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                                  decoration: BoxDecoration(
+                                                    color: isDaemon
+                                                        ? AntigravityTheme.googleGreen.withValues(alpha: 0.15)
+                                                        : AntigravityTheme.googleBlue.withValues(alpha: 0.15),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                    border: Border.all(
+                                                      color: isDaemon
+                                                          ? AntigravityTheme.googleGreen.withValues(alpha: 0.3)
+                                                          : AntigravityTheme.googleBlue.withValues(alpha: 0.3),
+                                                    ),
+                                                  ),
+                                                  child: Text(
+                                                    isDaemon ? 'AGY 2.0' : 'IDE',
+                                                    style: TextStyle(
+                                                      fontSize: 8.5,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: isDaemon ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                             subtitle: Text(
-                                              '${c.messages.length} msgs • ${DateFormat('MMM d, HH:mm').format(c.createdAt)}',
+                                              '${c.messages.length} msgs • ${c.sourceLabel} • ${DateFormat('MMM d, HH:mm').format(c.createdAt)}',
                                               style: const TextStyle(fontSize: 9.5, color: AntigravityTheme.textMuted),
                                             ),
                                             trailing: convs.length > 1
@@ -488,6 +578,127 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: () => projProvider.fetchProjects(),
                   ),
                 ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceTabs(BuildContext context, ChatProvider chatProvider) {
+    final activeFilter = chatProvider.sourceFilter;
+    final daemonCount = chatProvider.daemonConversations.length;
+    final ideCount = chatProvider.desktopIdeConversations.length;
+    final allCount = chatProvider.conversations.length;
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AntigravityTheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AntigravityTheme.borderSubtle),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildSourceTabItem(
+              title: 'AGY 2.0',
+              count: daemonCount,
+              icon: Icons.smart_toy_outlined,
+              isSelected: activeFilter == ConversationSource.daemon,
+              selectedColor: AntigravityTheme.googleGreen,
+              onTap: () => chatProvider.setSourceFilter(ConversationSource.daemon),
+            ),
+          ),
+          const SizedBox(width: 3),
+          Expanded(
+            child: _buildSourceTabItem(
+              title: 'Desktop IDE',
+              count: ideCount,
+              icon: Icons.laptop_chromebook_rounded,
+              isSelected: activeFilter == ConversationSource.desktopIde,
+              selectedColor: AntigravityTheme.googleBlue,
+              onTap: () => chatProvider.setSourceFilter(ConversationSource.desktopIde),
+            ),
+          ),
+          const SizedBox(width: 3),
+          Expanded(
+            child: _buildSourceTabItem(
+              title: 'All',
+              count: allCount,
+              icon: Icons.forum_outlined,
+              isSelected: activeFilter == null,
+              selectedColor: Colors.white,
+              onTap: () => chatProvider.setSourceFilter(null),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSourceTabItem({
+    required String title,
+    required int count,
+    required IconData icon,
+    required bool isSelected,
+    required Color selectedColor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? selectedColor.withValues(alpha: 0.15)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: isSelected
+                ? selectedColor.withValues(alpha: 0.35)
+                : Colors.transparent,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 13,
+              color: isSelected ? selectedColor : AntigravityTheme.textSecondary,
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  color: isSelected ? selectedColor : AntigravityTheme.textSecondary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? selectedColor.withValues(alpha: 0.25)
+                    : AntigravityTheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  color: isSelected ? selectedColor : AntigravityTheme.textMuted,
+                ),
               ),
             ),
           ],
@@ -672,6 +883,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     else
                       ...conn.discoveredHosts.map((DiscoveredHost h) {
                         final isCurrent = conn.hostAddress == h.ipAddress;
+                        final isHeadless = h.isHeadless;
+
                         return Container(
                           margin: const EdgeInsets.only(bottom: 6),
                           decoration: BoxDecoration(
@@ -686,22 +899,47 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: ListTile(
                             dense: true,
                             leading: Icon(
-                              Icons.computer_rounded,
-                              color: isCurrent ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                              isHeadless ? Icons.dns_rounded : Icons.computer_rounded,
+                              color: isCurrent
+                                  ? AntigravityTheme.googleGreen
+                                  : (isHeadless ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue),
                               size: 22,
                             ),
                             title: Row(
                               children: [
-                                Text(
-                                  h.hostName,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: isCurrent ? FontWeight.bold : FontWeight.w600,
-                                    color: isCurrent ? AntigravityTheme.googleGreen : Colors.white,
+                                Expanded(
+                                  child: Text(
+                                    h.displayTitle,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: isCurrent ? FontWeight.bold : FontWeight.w600,
+                                      color: isCurrent ? AntigravityTheme.googleGreen : Colors.white,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (isHeadless ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue)
+                                        .withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: (isHeadless ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue)
+                                          .withValues(alpha: 0.3),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    isHeadless ? 'HEADLESS' : 'DESKTOP',
+                                    style: TextStyle(
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: isHeadless ? AntigravityTheme.googleGreen : AntigravityTheme.googleBlue,
+                                    ),
                                   ),
                                 ),
                                 if (isCurrent) ...[
-                                  const SizedBox(width: 8),
+                                  const SizedBox(width: 6),
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                     decoration: BoxDecoration(
@@ -709,15 +947,15 @@ class _HomeScreenState extends State<HomeScreen> {
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: const Text(
-                                      'CONNECTED',
-                                      style: TextStyle(fontSize: 9, color: Colors.black, fontWeight: FontWeight.bold),
+                                      'ACTIVE',
+                                      style: TextStyle(fontSize: 8.5, color: Colors.black, fontWeight: FontWeight.bold),
                                     ),
                                   ),
                                 ],
                               ],
                             ),
                             subtitle: Text(
-                              '${h.ipAddress}:${h.port} • Auto-Discovered',
+                              '${h.ipAddress}:${h.port} • ${h.platform ?? "Antigravity 2.0"}',
                               style: const TextStyle(fontSize: 11, color: AntigravityTheme.textMuted, fontFamily: 'monospace'),
                             ),
                             trailing: isCurrent
@@ -728,7 +966,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               Navigator.pop(modalCtx);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('Switched to PC: ${h.hostName} (${h.ipAddress})'),
+                                  content: Text('Switched to ${h.displayTitle} (${h.ipAddress})'),
                                   backgroundColor: AntigravityTheme.surfaceContainerHigh,
                                 ),
                               );
@@ -738,14 +976,32 @@ class _HomeScreenState extends State<HomeScreen> {
                       }),
 
                     const SizedBox(height: 10),
+                    // Daemon Service Manager Button
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AntigravityTheme.surfaceContainerHigh,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(40),
+                      ),
+                      icon: const Icon(Icons.dns_rounded, size: 16, color: AntigravityTheme.googleBlue),
+                      label: const Text('Open Daemon Service Dashboard', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      onPressed: () {
+                        Navigator.pop(modalCtx);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const DaemonDashboardScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 6),
                     // Manual IP & Settings Button
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: AntigravityTheme.border),
-                        minimumSize: const Size.fromHeight(40),
+                        minimumSize: const Size.fromHeight(38),
                       ),
-                      icon: const Icon(Icons.settings_ethernet, size: 16, color: AntigravityTheme.googleBlue),
-                      label: const Text('Custom IP / Tailscale / Settings', style: TextStyle(fontSize: 12, color: AntigravityTheme.googleBlue)),
+                      icon: const Icon(Icons.settings_ethernet, size: 16, color: AntigravityTheme.textSecondary),
+                      label: const Text('Custom IP / Tailscale / Ports', style: TextStyle(fontSize: 12, color: AntigravityTheme.textSecondary)),
                       onPressed: () {
                         Navigator.pop(modalCtx);
                         ConnectionDialog.show(context);
@@ -768,53 +1024,191 @@ class _HomeScreenState extends State<HomeScreen> {
   ) {
     final titleController = TextEditingController();
     final currentProj = projProvider.selectedProject;
+    ConversationSource selectedSource = ConversationSource.daemon;
 
     showDialog(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('Start New Autonomous Task', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Target Project: ${currentProj?.name ?? "None Selected"}',
-              style: const TextStyle(fontSize: 12, color: AntigravityTheme.googleBlue, fontWeight: FontWeight.w600),
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: AntigravityTheme.surface,
+          title: const Text(
+            'Start New Session / Task',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Target Project: ${currentProj?.name ?? "None Selected"}',
+                  style: const TextStyle(fontSize: 12, color: AntigravityTheme.googleBlue, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: titleController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Task Title / Objective',
+                    hintText: 'e.g. Fix authentication token refresh bug',
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'TARGET ENVIRONMENT & ENGINE',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    letterSpacing: 0.5,
+                    fontWeight: FontWeight.bold,
+                    color: AntigravityTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Option 1: Antigravity 2.0 Headless Daemon
+                InkWell(
+                  onTap: () => setDialogState(() => selectedSource = ConversationSource.daemon),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: selectedSource == ConversationSource.daemon
+                          ? AntigravityTheme.googleGreen.withValues(alpha: 0.12)
+                          : AntigravityTheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: selectedSource == ConversationSource.daemon
+                            ? AntigravityTheme.googleGreen
+                            : AntigravityTheme.borderSubtle,
+                        width: selectedSource == ConversationSource.daemon ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.smart_toy_outlined,
+                          color: selectedSource == ConversationSource.daemon
+                              ? AntigravityTheme.googleGreen
+                              : AntigravityTheme.textSecondary,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Antigravity 2.0 (Headless Daemon)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: selectedSource == ConversationSource.daemon
+                                      ? Colors.white
+                                      : AntigravityTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Autonomous background agent with host tools',
+                                style: TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (selectedSource == ConversationSource.daemon)
+                          const Icon(Icons.check_circle, size: 18, color: AntigravityTheme.googleGreen),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Option 2: Antigravity Desktop IDE
+                InkWell(
+                  onTap: () => setDialogState(() => selectedSource = ConversationSource.desktopIde),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: selectedSource == ConversationSource.desktopIde
+                          ? AntigravityTheme.googleBlue.withValues(alpha: 0.12)
+                          : AntigravityTheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: selectedSource == ConversationSource.desktopIde
+                            ? AntigravityTheme.googleBlue
+                            : AntigravityTheme.borderSubtle,
+                        width: selectedSource == ConversationSource.desktopIde ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.laptop_chromebook_rounded,
+                          color: selectedSource == ConversationSource.desktopIde
+                              ? AntigravityTheme.googleBlue
+                              : AntigravityTheme.textSecondary,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Antigravity Desktop IDE',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: selectedSource == ConversationSource.desktopIde
+                                      ? Colors.white
+                                      : AntigravityTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Synced with workstation IDE editor sessions',
+                                style: TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (selectedSource == ConversationSource.desktopIde)
+                          const Icon(Icons.check_circle, size: 18, color: AntigravityTheme.googleBlue),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: titleController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Task Title / Objective',
-                hintText: 'e.g. Fix authentication token refresh bug',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx),
+              child: const Text('Cancel', style: TextStyle(color: AntigravityTheme.textSecondary)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: selectedSource == ConversationSource.daemon
+                    ? AntigravityTheme.googleGreen
+                    : AntigravityTheme.googleBlue,
+                foregroundColor: Colors.black,
               ),
+              onPressed: () {
+                final title = titleController.text.trim();
+                if (currentProj != null) {
+                  chatProvider.createConversation(
+                    currentProj.id,
+                    title.isEmpty ? 'New Task' : title,
+                    source: selectedSource,
+                  );
+                }
+                Navigator.pop(dialogCtx);
+              },
+              child: const Text('Start Session', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Cancel', style: TextStyle(color: AntigravityTheme.textSecondary)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AntigravityTheme.googleGreen,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: () {
-              final title = titleController.text.trim();
-              if (currentProj != null) {
-                chatProvider.createConversation(
-                  currentProj.id,
-                  title.isEmpty ? 'New Task' : title,
-                );
-              }
-              Navigator.pop(dialogCtx);
-            },
-            child: const Text('Start Session', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
       ),
     );
   }

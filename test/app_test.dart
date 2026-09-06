@@ -4,14 +4,21 @@ import 'package:provider/provider.dart';
 import 'package:agyremote/core/network/bridge_client.dart';
 import 'package:agyremote/core/theme/app_theme.dart';
 import 'package:agyremote/models/approval.dart';
+import 'package:agyremote/models/artifact.dart';
 import 'package:agyremote/models/conversation.dart';
+import 'package:agyremote/models/daemon_status.dart';
 import 'package:agyremote/models/project.dart';
+import 'package:agyremote/models/quick_command.dart';
 import 'package:agyremote/providers/chat_provider.dart';
 import 'package:agyremote/providers/connection_provider.dart';
 import 'package:agyremote/providers/project_provider.dart';
+import 'package:agyremote/providers/quick_command_provider.dart';
+import 'package:agyremote/screens/daemon_dashboard_screen.dart';
 import 'package:agyremote/screens/diff_viewer_screen.dart';
 import 'package:agyremote/screens/home_screen.dart';
+import 'package:agyremote/screens/plan_inspector_screen.dart';
 import 'package:agyremote/screens/project_create_screen.dart';
+import 'package:agyremote/widgets/adb_device_sheet.dart';
 
 void main() {
   group('Models Unit Tests', () {
@@ -56,7 +63,7 @@ void main() {
       expect(diff.deletions, 1);
     });
 
-    test('Conversation and Message parsing', () {
+    test('Conversation and Message parsing with ConversationSource tabs', () {
       final msg = ConversationMessage.fromJson({
         'id': 'm1',
         'sender': 'user',
@@ -66,14 +73,93 @@ void main() {
       expect(msg.sender, 'user');
       expect(msg.content, 'Fix bug');
 
-      final conv = Conversation.fromJson({
-        'id': 'c1',
+      // Antigravity 2.0 Daemon conversation
+      final daemonConv = Conversation.fromJson({
+        'id': 'c_daemon',
         'project_id': 'p1',
         'title': 'Autonomous Fix',
+        'source': 'daemon',
+        'engine': 'Antigravity 2.0',
         'messages': [msg.toJson()],
       });
-      expect(conv.id, 'c1');
-      expect(conv.messages.length, 1);
+      expect(daemonConv.id, 'c_daemon');
+      expect(daemonConv.isDaemon, true);
+      expect(daemonConv.isDesktopIde, false);
+      expect(daemonConv.sourceLabel, 'Antigravity 2.0');
+
+      // Antigravity Desktop IDE conversation
+      final ideConv = Conversation.fromJson({
+        'id': 'c_ide',
+        'project_id': 'p1',
+        'title': 'IDE Code Polish',
+        'source': 'desktop_ide',
+        'engine': 'Desktop IDE',
+        'messages': [msg.toJson()],
+      });
+      expect(ideConv.id, 'c_ide');
+      expect(ideConv.isDaemon, false);
+      expect(ideConv.isDesktopIde, true);
+      expect(ideConv.sourceLabel, 'Desktop IDE');
+    });
+
+    test('BrainArtifact and DaemonStatusInfo parsing', () {
+      final art = BrainArtifact.fromJson({
+        'name': 'implementation_plan.md',
+        'conversation_id': 'c1',
+        'type': 'plan',
+        'request_feedback': true,
+      });
+      expect(art.type, ArtifactType.plan);
+      expect(art.requestFeedback, true);
+
+      final status = DaemonStatusInfo.fromJson({
+        'status': 'online',
+        'uptime_seconds': 7200,
+        'pid': 1234,
+        'platform': 'Windows',
+        'cli_remote_control_hostname': 'box-daemon',
+        'remote_control_hostname': 'box-desktop',
+        'update_interval': 'daily',
+        'has_cli_name_override': false,
+        'auth_account': 'test@google.com',
+        'is_authenticated': true,
+      });
+      expect(status.cliHostname, 'box-daemon');
+      expect(status.desktopHostname, 'box-desktop');
+      expect(status.formattedUptime, '2h 0m 0s');
+
+      final matrix = ServiceLifecycleEntry.getMatrix('Windows');
+      expect(matrix.length, 3);
+      expect(matrix.any((m) => m.isCurrentOs && m.osName == 'Windows'), true);
+    });
+
+    test('QuickCommand and AdbDevice model parsing', () {
+      final cmd = QuickCommand.fromJson({
+        'id': 'cmd_git_push',
+        'title': 'Git Push',
+        'description': 'Stage, commit and push',
+        'script': 'git add . && git commit -m "{COMMIT_MESSAGE}" && git push',
+        'category': 'git',
+        'requires_commit_message': true,
+        'is_built_in': true,
+      });
+      expect(cmd.id, 'cmd_git_push');
+      expect(cmd.requiresCommitMessage, true);
+      expect(cmd.isBuiltIn, true);
+
+      final builtIns = QuickCommand.defaultBuiltInCommands;
+      expect(builtIns.any((c) => c.id == 'cmd_git_push'), true);
+      expect(builtIns.any((c) => c.id == 'cmd_build_apk_push'), true);
+
+      final dev = AdbDevice.fromJson({
+        'serial': '192.168.1.50:5555',
+        'status': 'device',
+        'model': 'Pixel_7_Pro',
+        'is_wireless': true,
+      });
+      expect(dev.isWireless, true);
+      expect(dev.isConnected, true);
+      expect(dev.displayName, 'Pixel 7 Pro');
     });
   });
 
@@ -109,6 +195,32 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
       expect(chat.activeConversation!.messages.length, greaterThan(1));
+
+      bridge.disconnect();
+    });
+
+    test('ChatProvider filters conversations by ConversationSource tab', () async {
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      final chat = ChatProvider(bridge: bridge);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // In mock mode, we populated both daemon and desktop_ide sessions
+      expect(chat.daemonConversations.isNotEmpty, true);
+      expect(chat.desktopIdeConversations.isNotEmpty, true);
+
+      chat.setSourceFilter(ConversationSource.daemon);
+      final daemonOnly = chat.getConversationsForProject(null);
+      expect(daemonOnly.every((c) => c.isDaemon), true);
+
+      chat.setSourceFilter(ConversationSource.desktopIde);
+      final ideOnly = chat.getConversationsForProject(null);
+      expect(ideOnly.every((c) => c.isDesktopIde), true);
+
+      chat.setSourceFilter(null);
+      final allConvs = chat.getConversationsForProject(null);
+      expect(allConvs.length, greaterThanOrEqualTo(daemonOnly.length + ideOnly.length));
 
       bridge.disconnect();
     });
@@ -180,6 +292,62 @@ void main() {
       expect(find.text('Create Remote Project'), findsOneWidget);
       expect(find.text('Project Name'), findsOneWidget);
       expect(find.text('Create & Select Project'), findsOneWidget);
+
+      bridge.disconnect();
+    });
+
+    testWidgets('PlanInspectorScreen renders plan and walkthrough', (tester) async {
+      final plan = BrainArtifact(
+        id: 'art_1',
+        conversationId: 'c1',
+        name: 'implementation_plan.md',
+        filePath: 'brain/c1/implementation_plan.md',
+        type: ArtifactType.plan,
+        lastModified: DateTime.now(),
+        content: '# Implementation Plan\n\n## User Review Required\n> [!IMPORTANT]\n> Test notice\n\n- [ ] Task 1',
+      );
+
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => ChatProvider(bridge: bridge),
+          child: MaterialApp(
+            theme: AntigravityTheme.darkTheme,
+            home: PlanInspectorScreen(initialArtifact: plan),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      expect(find.text('implementation_plan.md'), findsOneWidget);
+      expect(find.text('Approve & Execute'), findsOneWidget);
+      expect(find.text('Request Changes'), findsOneWidget);
+
+      bridge.disconnect();
+    });
+
+    testWidgets('DaemonDashboardScreen renders service info and diagnostic controls', (tester) async {
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => ConnectionProvider(bridge: bridge),
+          child: MaterialApp(
+            theme: AntigravityTheme.darkTheme,
+            home: const DaemonDashboardScreen(),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      expect(find.text('Daemon Service Manager'), findsOneWidget);
+      expect(find.text('SERVICE ACTIVE'), findsOneWidget);
+      expect(find.text('MACHINE NAMING & CONFIGURATION'), findsOneWidget);
+      expect(find.text('GOOGLE SIGN-IN & AUTHENTICATION'), findsOneWidget);
+      expect(find.text('REMOTE TROUBLESHOOTING & DIAGNOSTICS'), findsOneWidget);
 
       bridge.disconnect();
     });

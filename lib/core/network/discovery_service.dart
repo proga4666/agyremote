@@ -8,14 +8,24 @@ class DiscoveredHost {
   final String ipAddress;
   final int port;
   final DateTime lastSeen;
+  final String instanceType; // 'headless_daemon' | 'desktop_editor'
+  final String? cliHostname;
+  final String? desktopHostname;
+  final String? platform;
 
   DiscoveredHost({
     required this.hostName,
     required this.ipAddress,
     required this.port,
     required this.lastSeen,
+    this.instanceType = 'headless_daemon',
+    this.cliHostname,
+    this.desktopHostname,
+    this.platform,
   });
 
+  bool get isHeadless => instanceType == 'headless_daemon';
+  String get displayTitle => cliHostname ?? hostName;
   String get wsUrl => 'ws://$ipAddress:$port/ws';
 
   @override
@@ -24,10 +34,11 @@ class DiscoveredHost {
       other is DiscoveredHost &&
           runtimeType == other.runtimeType &&
           ipAddress == other.ipAddress &&
-          port == other.port;
+          port == other.port &&
+          instanceType == other.instanceType;
 
   @override
-  int get hashCode => ipAddress.hashCode ^ port.hashCode;
+  int get hashCode => ipAddress.hashCode ^ port.hashCode ^ instanceType.hashCode;
 }
 
 class DiscoveryService {
@@ -142,17 +153,27 @@ class DiscoveryService {
       if (text.startsWith('{') && text.endsWith('}')) {
         final decoded = jsonDecode(text) as Map<String, dynamic>;
         if (decoded['service'] == 'antigravity_daemon') {
-          final hostName = decoded['host_name']?.toString() ?? 'Workstation';
+          final hostName = decoded['host_name']?.toString() ??
+              decoded['cli_hostname']?.toString() ??
+              'Workstation';
           final port = (decoded['port'] as int?) ?? 7800;
+          final instanceType = decoded['instance_type']?.toString() ?? 'headless_daemon';
+          final cliHostname = decoded['cli_hostname']?.toString() ?? hostName;
+          final desktopHostname = decoded['desktop_hostname']?.toString();
+          final platform = decoded['platform']?.toString();
 
           final host = DiscoveredHost(
             hostName: hostName,
             ipAddress: senderIp,
             port: port,
             lastSeen: DateTime.now(),
+            instanceType: instanceType,
+            cliHostname: cliHostname,
+            desktopHostname: desktopHostname,
+            platform: platform,
           );
 
-          final key = '$senderIp:$port';
+          final key = '$senderIp:$port:$instanceType';
           final isNew = !_discoveredMap.containsKey(key);
           _discoveredMap[key] = host;
 

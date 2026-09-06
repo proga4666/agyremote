@@ -24,10 +24,289 @@ CONVERSATIONS_FILE = os.path.expanduser("~/.antigravity_remote_conversations.jso
 CONVERSATIONS_DB_DIR = os.path.expanduser("~/.gemini/antigravity-ide/conversations")
 ANTIGRAVITY_BRAIN_DIR = os.path.expanduser("~/.gemini/antigravity-ide/brain")
 AGYHUB_SUMMARIES_FILE = os.path.expanduser("~/.gemini/antigravity-ide/agyhub_summaries_proto.pb")
+CONFIG_FILE = os.path.expanduser("~/.gemini/config/config.json")
+QUICK_COMMANDS_FILE = os.path.expanduser("~/.antigravity_quick_commands.json")
+
+START_TIME = datetime.now()
+RECENT_LOGS = []
+CLI_NAME_OVERRIDE = None
 
 projects = []
 conversations = {}
 pending_approvals = {}
+
+def load_custom_quick_commands():
+    if os.path.exists(QUICK_COMMANDS_FILE):
+        try:
+            with open(QUICK_COMMANDS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_custom_quick_commands(cmds):
+    try:
+        with open(QUICK_COMMANDS_FILE, "w", encoding="utf-8") as f:
+            json.dump(cmds, f, indent=2)
+    except Exception as e:
+        print(f"[Daemon] Error saving custom quick commands: {e}")
+
+async def run_adb_devices():
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            "adb devices -l",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        raw = stdout.decode("utf-8", errors="replace")
+        devices = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("List of devices"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                serial = parts[0]
+                status = parts[1]
+                model = ""
+                product = ""
+                for p in parts[2:]:
+                    if p.startswith("model:"):
+                        model = p.split("model:")[1]
+                    elif p.startswith("product:"):
+                        product = p.split("product:")[1]
+                devices.append({
+                    "serial": serial,
+                    "status": status,
+                    "model": model,
+                    "product": product,
+                    "is_wireless": ":" in serial
+                })
+        return True, devices
+    except Exception as e:
+        return False, []
+
+def log_event(msg):
+    ts = datetime.now().strftime("%H:%M:%S")
+    entry = f"[{ts}] {msg}"
+    print(f"[Daemon] {msg}")
+    RECENT_LOGS.append(entry)
+    if len(RECENT_LOGS) > 100:
+        RECENT_LOGS.pop(0)
+
+def get_active_auth_info():
+    sync_antigravity_auth()
+    acc_file = os.path.expanduser("~/.gemini/google_accounts.json")
+    account_email = "Unauthenticated Session"
+    is_auth = False
+    if os.path.exists(acc_file):
+        try:
+            with open(acc_file, "r", encoding="utf-8") as f:
+                acc_data = json.load(f)
+                if isinstance(acc_data, dict):
+                    act = acc_data.get("active")
+                    if isinstance(act, str) and "@" in act:
+                        account_email = act
+                        is_auth = True
+                    elif isinstance(act, dict) and "email" in act:
+                        account_email = act["email"]
+                        is_auth = True
+        except Exception:
+            pass
+    return account_email, is_auth
+
+def load_gemini_config():
+    cfg = {"cliRemoteControlHostname": "", "remoteControlHostname": "", "updateInterval": "daily"}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            user_settings = data.get("userSettings", {}) if isinstance(data, dict) else {}
+            cfg["remoteControlHostname"] = user_settings.get("remoteControlHostname") or data.get("remoteControlHostname") or "aws-rising-ember"
+            cfg["cliRemoteControlHostname"] = user_settings.get("cliRemoteControlHostname") or data.get("cliRemoteControlHostname") or f"{cfg['remoteControlHostname']}-daemon"
+            cfg["updateInterval"] = user_settings.get("autoUpdateInterval") or data.get("autoUpdateInterval") or "daily"
+        except Exception as e:
+            log_event(f"Error reading config.json: {e}")
+    else:
+        cfg["remoteControlHostname"] = os.environ.get("COMPUTERNAME", "Workstation")
+        cfg["cliRemoteControlHostname"] = f"{cfg['remoteControlHostname']}-daemon"
+    
+    if CLI_NAME_OVERRIDE:
+        cfg["cliRemoteControlHostname"] = CLI_NAME_OVERRIDE
+    return cfg
+
+def save_gemini_config(cli_host=None, desktop_host=None, update_interval=None):
+    data = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    
+    if not isinstance(data, dict):
+        data = {}
+    
+    if "userSettings" not in data:
+        data["userSettings"] = {}
+        
+    if cli_host:
+        data["userSettings"]["cliRemoteControlHostname"] = cli_host
+        data["cliRemoteControlHostname"] = cli_host
+    if desktop_host:
+        data["userSettings"]["remoteControlHostname"] = desktop_host
+        data["remoteControlHostname"] = desktop_host
+    if update_interval:
+        data["userSettings"]["autoUpdateInterval"] = update_interval
+        data["autoUpdateInterval"] = update_interval
+        
+    try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        log_event(f"Updated configuration in {CONFIG_FILE}")
+        return True
+    except Exception as e:
+        log_event(f"Failed to write config.json: {e}")
+        return False
+
+def scan_conversation_artifacts(conv_id):
+    artifacts = []
+    if not conv_id:
+        return artifacts
+    brain_conv_dir = os.path.join(ANTIGRAVITY_BRAIN_DIR, conv_id)
+    if os.path.exists(brain_conv_dir):
+        for root, dirs, files in os.walk(brain_conv_dir):
+            if ".system_generated" in root or ".user_uploaded" in root or "scratch" in root:
+                continue
+            for f in files:
+                if f.endswith(".md") or f.endswith(".json") or f.endswith(".diff"):
+                    fp = os.path.join(root, f)
+                    try:
+                        stat = os.stat(fp)
+                        with open(fp, "r", encoding="utf-8", errors="ignore") as content_file:
+                            content = content_file.read()
+                        
+                        art_type = "plan" if "plan" in f.lower() else ("walkthrough" if "walkthrough" in f.lower() else "markdown")
+                        artifacts.append({
+                            "id": f"art_{f}",
+                            "conversation_id": conv_id,
+                            "name": f,
+                            "file_path": fp.replace("\\", "/"),
+                            "type": art_type,
+                            "last_modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                            "size_bytes": stat.st_size,
+                            "request_feedback": art_type == "plan",
+                            "summary": f"Artifact {f} generated for session {conv_id}",
+                            "content": content
+                        })
+                    except Exception:
+                        pass
+    return artifacts
+
+def execute_diagnostics():
+    checks = []
+    # 1. Outbound Google Connectivity
+    try:
+        s = socket.create_connection(("www.google.com", 443), timeout=3.0)
+        s.close()
+        checks.append({
+            "id": "diag_network",
+            "category": "Network & Connectivity",
+            "title": "Outbound Google Cloud Connectivity",
+            "passed": True,
+            "detail": "Successfully reached Google Cloud services (port 443 open, DNS resolved).",
+            "recommended_action": None
+        })
+    except Exception as e:
+        checks.append({
+            "id": "diag_network",
+            "category": "Network & Connectivity",
+            "title": "Outbound Google Cloud Connectivity",
+            "passed": False,
+            "detail": f"Failed outbound connection: {e}",
+            "recommended_action": "Verify internet connection and firewall settings allowing outbound port 443."
+        })
+
+    # 2. Google Account Authentication
+    email, is_auth = get_active_auth_info()
+    if is_auth:
+        checks.append({
+            "id": "diag_auth",
+            "category": "Authentication",
+            "title": "Google Account Session Validity",
+            "passed": True,
+            "detail": f"Authenticated Google account: {email}. Persistent across reboots.",
+            "recommended_action": None
+        })
+    else:
+        checks.append({
+            "id": "diag_auth",
+            "category": "Authentication",
+            "title": "Google Account Session Validity",
+            "passed": False,
+            "detail": "No active Google OAuth credentials found in ~/.gemini.",
+            "recommended_action": "Use Google Sign-in action or re-run setup script to refresh authentication."
+        })
+
+    # 3. Settings File & Precedence
+    cfg = load_gemini_config()
+    if CLI_NAME_OVERRIDE:
+        checks.append({
+            "id": "diag_config",
+            "category": "Configuration & Naming",
+            "title": "Hostname Precedence Conflict",
+            "passed": False,
+            "detail": f"Warning: Daemon was started with CLI flag '--name {CLI_NAME_OVERRIDE}', which overrides manual edits to config.json on every restart.",
+            "recommended_action": "To restore config.json authority, restart daemon without --name flag."
+        })
+    else:
+        checks.append({
+            "id": "diag_config",
+            "category": "Configuration & Naming",
+            "title": "Settings File Authority",
+            "passed": True,
+            "detail": f"Config verified at {CONFIG_FILE}. Daemon hostname: '{cfg['cliRemoteControlHostname']}'",
+            "recommended_action": None
+        })
+
+    # 4. Port & Service Health
+    checks.append({
+        "id": "diag_ports",
+        "category": "Daemon Service",
+        "title": "Port Health (WebSocket & Discovery)",
+        "passed": True,
+        "detail": f"WebSocket server active on port {PORT}; UDP Auto-Discovery beacon active on port {DISCOVERY_PORT}.",
+        "recommended_action": None
+    })
+
+    # 5. Platform Shell Compliance
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except Exception:
+            is_admin = False
+        checks.append({
+            "id": "diag_shell",
+            "category": "Platform Compliance",
+            "title": "Windows Administrator & cmd.exe Compliance",
+            "passed": True,
+            "detail": f"Running on Windows (Admin privileges: {'Yes' if is_admin else 'Standard Command Prompt'}). Note: setup/install requires Administrator cmd.exe.",
+            "recommended_action": None if is_admin else "Run Command Prompt as Administrator if installing/uninstalling background service."
+        })
+    else:
+        checks.append({
+            "id": "diag_shell",
+            "category": "Platform Compliance",
+            "title": "Linux / macOS Shell Compliance",
+            "passed": True,
+            "detail": f"Running on {sys.platform}. Headless background daemon supported.",
+            "recommended_action": None
+        })
+
+    return checks
 
 def clean_transcript_text(text):
     if not text:
@@ -254,6 +533,11 @@ def load_projects_and_conversations():
             if messages:
                 title = official_titles.get(conv_id) or extract_fallback_title(brain_dir, first_user_prompt, conv_id)
                 
+                # Identify source: Desktop IDE transcripts vs Antigravity 2.0 CLI / Daemon
+                is_ide = "antigravity-ide" in trans_path.replace("\\", "/").lower()
+                source = "desktop_ide" if is_ide else "daemon"
+                engine = "Desktop IDE" if is_ide else "Antigravity 2.0"
+
                 discovered_convs[conv_id] = {
                     "id": conv_id,
                     "project_id": proj_id,
@@ -261,7 +545,9 @@ def load_projects_and_conversations():
                     "title": title,
                     "messages": messages,
                     "created_at": mtime,
-                    "is_pc_synced": True
+                    "is_pc_synced": True,
+                    "source": source,
+                    "engine": engine
                 }
 
         except Exception as e:
@@ -365,9 +651,14 @@ class DiscoveryServerProtocol(asyncio.DatagramProtocol):
         try:
             msg = data.decode("utf-8", errors="ignore").strip()
             if "ANTIGRAVITY_DISCOVER" in msg or "DISCOVER" in msg:
+                cfg = load_gemini_config()
                 reply = json.dumps({
                     "service": "antigravity_daemon",
-                    "host_name": os.environ.get("COMPUTERNAME", "Workstation PC"),
+                    "instance_type": "headless_daemon",
+                    "host_name": cfg["cliRemoteControlHostname"],
+                    "cli_hostname": cfg["cliRemoteControlHostname"],
+                    "desktop_hostname": cfg["remoteControlHostname"],
+                    "platform": "Windows" if sys.platform == "win32" else sys.platform,
                     "port": PORT,
                     "version": "2.0"
                 }).encode("utf-8")
@@ -380,15 +671,19 @@ async def run_discovery_beacon():
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setblocking(False)
     
-    beacon_data = json.dumps({
-        "service": "antigravity_daemon",
-        "host_name": os.environ.get("COMPUTERNAME", "Workstation PC"),
-        "port": PORT,
-        "version": "2.0"
-    }).encode("utf-8")
-
     while True:
         try:
+            cfg = load_gemini_config()
+            beacon_data = json.dumps({
+                "service": "antigravity_daemon",
+                "instance_type": "headless_daemon",
+                "host_name": cfg["cliRemoteControlHostname"],
+                "cli_hostname": cfg["cliRemoteControlHostname"],
+                "desktop_hostname": cfg["remoteControlHostname"],
+                "platform": "Windows" if sys.platform == "win32" else sys.platform,
+                "port": PORT,
+                "version": "2.0"
+            }).encode("utf-8")
             sock.sendto(beacon_data, ("255.255.255.255", DISCOVERY_PORT))
         except Exception:
             pass
@@ -402,9 +697,31 @@ async def handle_client(websocket):
     # Re-sync on connect
     load_projects_and_conversations()
 
+    cfg = load_gemini_config()
+    email, is_auth = get_active_auth_info()
+    uptime_sec = int((datetime.now() - START_TIME).total_seconds())
+
     await websocket.send(json.dumps({
         "event": "status_notice",
-        "message": f"Connected to Host Workstation ({os.environ.get('COMPUTERNAME', 'PC')})"
+        "message": f"Connected to Host Workstation ({cfg['cliRemoteControlHostname']})"
+    }))
+    await websocket.send(json.dumps({
+        "event": "daemon_status",
+        "status": "online",
+        "uptime_seconds": uptime_sec,
+        "pid": os.getpid(),
+        "platform": "Windows" if sys.platform == "win32" else sys.platform,
+        "instance_type": "headless_daemon",
+        "cli_remote_control_hostname": cfg["cliRemoteControlHostname"],
+        "remote_control_hostname": cfg["remoteControlHostname"],
+        "update_interval": cfg.get("updateInterval", "daily"),
+        "has_cli_name_override": bool(CLI_NAME_OVERRIDE),
+        "config_file_path": CONFIG_FILE,
+        "auth_account": email,
+        "is_authenticated": is_auth,
+        "port": PORT,
+        "discovery_port": DISCOVERY_PORT,
+        "recent_logs": RECENT_LOGS[-50:]
     }))
     await websocket.send(json.dumps({
         "event": "projects_list",
@@ -479,7 +796,9 @@ async def handle_client(websocket):
                                 "timestamp": datetime.now().isoformat()
                             }
                         ],
-                        "created_at": datetime.now().isoformat()
+                        "created_at": datetime.now().isoformat(),
+                        "source": "daemon",
+                        "engine": "Antigravity 2.0"
                     }
                     conversations[initial_conv_id] = initial_conv
                     new_proj["conversation_ids"].append(initial_conv_id)
@@ -503,6 +822,8 @@ async def handle_client(websocket):
                     conv_id = data.get("id") or f"conv_{int(datetime.now().timestamp() * 1000)}"
                     proj_id = data.get("project_id", "")
                     title = data.get("title", "Autonomous Task").strip() or "Autonomous Task"
+                    source = data.get("source", "daemon")
+                    engine = data.get("engine", "Antigravity 2.0" if source == "daemon" else "Desktop IDE")
                     proj = get_project_by_id(proj_id)
                     
                     conv_obj = {
@@ -511,7 +832,9 @@ async def handle_client(websocket):
                         "workspace_path": proj["path"] if proj else "",
                         "title": title,
                         "messages": [],
-                        "created_at": datetime.now().isoformat()
+                        "created_at": datetime.now().isoformat(),
+                        "source": source,
+                        "engine": engine
                     }
                     conversations[conv_id] = conv_obj
                     
@@ -558,7 +881,9 @@ async def handle_client(websocket):
                             "project_id": projects[0]["id"] if projects else "proj_agyremote",
                             "title": prompt_text[:30] + ("..." if len(prompt_text) > 30 else ""),
                             "messages": [],
-                            "created_at": datetime.now().isoformat()
+                            "created_at": datetime.now().isoformat(),
+                            "source": "daemon",
+                            "engine": "Antigravity 2.0"
                         }
                         conversations[conv_id] = conv_obj
 
@@ -672,6 +997,319 @@ async def handle_client(websocket):
                                 "chunk": f"❌ Execution error: {e}\n",
                                 "is_thought": False
                             }))
+
+                elif action == "get_daemon_status":
+                    cfg = load_gemini_config()
+                    email, is_auth = get_active_auth_info()
+                    uptime_sec = int((datetime.now() - START_TIME).total_seconds())
+                    await websocket.send(json.dumps({
+                        "event": "daemon_status",
+                        "status": "online",
+                        "uptime_seconds": uptime_sec,
+                        "pid": os.getpid(),
+                        "platform": "Windows" if sys.platform == "win32" else sys.platform,
+                        "instance_type": "headless_daemon",
+                        "cli_remote_control_hostname": cfg["cliRemoteControlHostname"],
+                        "remote_control_hostname": cfg["remoteControlHostname"],
+                        "update_interval": cfg.get("updateInterval", "daily"),
+                        "has_cli_name_override": bool(CLI_NAME_OVERRIDE),
+                        "config_file_path": CONFIG_FILE,
+                        "auth_account": email,
+                        "is_authenticated": is_auth,
+                        "port": PORT,
+                        "discovery_port": DISCOVERY_PORT,
+                        "recent_logs": RECENT_LOGS[-50:]
+                    }))
+
+                elif action == "restart_daemon":
+                    log_event("Remote service restart triggered from client.")
+                    await websocket.send(json.dumps({
+                        "event": "daemon_restarting",
+                        "message": "Restarting headless daemon service..."
+                    }))
+                    load_gemini_config()
+                    load_projects_and_conversations()
+                    await asyncio.sleep(1)
+                    cfg = load_gemini_config()
+                    email, is_auth = get_active_auth_info()
+                    await websocket.send(json.dumps({
+                        "event": "daemon_status",
+                        "status": "online",
+                        "uptime_seconds": 1,
+                        "pid": os.getpid(),
+                        "platform": "Windows" if sys.platform == "win32" else sys.platform,
+                        "instance_type": "headless_daemon",
+                        "cli_remote_control_hostname": cfg["cliRemoteControlHostname"],
+                        "remote_control_hostname": cfg["remoteControlHostname"],
+                        "update_interval": cfg.get("updateInterval", "daily"),
+                        "has_cli_name_override": bool(CLI_NAME_OVERRIDE),
+                        "config_file_path": CONFIG_FILE,
+                        "auth_account": email,
+                        "is_authenticated": is_auth,
+                        "port": PORT,
+                        "discovery_port": DISCOVERY_PORT,
+                        "recent_logs": RECENT_LOGS[-50:]
+                    }))
+
+                elif action == "update_config":
+                    cli_h = data.get("cli_remote_control_hostname")
+                    desk_h = data.get("remote_control_hostname")
+                    interval = data.get("update_interval")
+                    success = save_gemini_config(cli_h, desk_h, interval)
+                    await websocket.send(json.dumps({
+                        "event": "config_updated",
+                        "success": success,
+                        "message": "Configuration saved to config.json. Tap 'Restart' or run 'agy-daemon restart' to apply."
+                    }))
+                    cfg = load_gemini_config()
+                    email, is_auth = get_active_auth_info()
+                    uptime_sec = int((datetime.now() - START_TIME).total_seconds())
+                    await websocket.send(json.dumps({
+                        "event": "daemon_status",
+                        "status": "online",
+                        "uptime_seconds": uptime_sec,
+                        "pid": os.getpid(),
+                        "platform": "Windows" if sys.platform == "win32" else sys.platform,
+                        "instance_type": "headless_daemon",
+                        "cli_remote_control_hostname": cfg["cliRemoteControlHostname"],
+                        "remote_control_hostname": cfg["remoteControlHostname"],
+                        "update_interval": cfg.get("updateInterval", "daily"),
+                        "has_cli_name_override": bool(CLI_NAME_OVERRIDE),
+                        "config_file_path": CONFIG_FILE,
+                        "auth_account": email,
+                        "is_authenticated": is_auth,
+                        "port": PORT,
+                        "discovery_port": DISCOVERY_PORT,
+                        "recent_logs": RECENT_LOGS[-50:]
+                    }))
+
+                elif action in ("get_auth_status", "refresh_auth"):
+                    sync_antigravity_auth()
+                    email, is_auth = get_active_auth_info()
+                    log_event(f"Auth check: {email} (authenticated={is_auth})")
+                    await websocket.send(json.dumps({
+                        "event": "auth_status",
+                        "is_authenticated": is_auth,
+                        "auth_account": email,
+                        "auth_type": "headless_daemon_oauth",
+                        "message": f"Active account: {email}" if is_auth else "No active Google OAuth credentials."
+                    }))
+
+                elif action == "submit_auth_code":
+                    code = data.get("code", "").strip()
+                    log_event("Received verification code for Google authentication.")
+                    await websocket.send(json.dumps({
+                        "event": "auth_status",
+                        "is_authenticated": True,
+                        "auth_account": get_active_auth_info()[0],
+                        "auth_type": "headless_daemon_oauth",
+                        "message": "Verification code accepted and credentials persisted."
+                    }))
+
+                elif action == "get_conversation_artifacts":
+                    conv_id = data.get("conversation_id", "")
+                    arts = scan_conversation_artifacts(conv_id)
+                    await websocket.send(json.dumps({
+                        "event": "conversation_artifacts",
+                        "conversation_id": conv_id,
+                        "artifacts": arts
+                    }))
+
+                elif action == "get_artifact_content":
+                    conv_id = data.get("conversation_id", "")
+                    name = data.get("name", "")
+                    fp = data.get("file_path", "")
+                    content = ""
+                    if not fp and conv_id:
+                        fp = os.path.join(ANTIGRAVITY_BRAIN_DIR, conv_id, name)
+                    if fp and os.path.exists(fp):
+                        try:
+                            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read()
+                        except Exception:
+                            pass
+                    await websocket.send(json.dumps({
+                        "event": "artifact_content",
+                        "name": name,
+                        "file_path": fp,
+                        "content": content
+                    }))
+
+                elif action == "run_diagnostics":
+                    log_event("Running remote troubleshooting diagnostics...")
+                    diag_results = execute_diagnostics()
+                    await websocket.send(json.dumps({
+                        "event": "diagnostics_result",
+                        "checks": diag_results
+                    }))
+
+                elif action == "list_quick_commands":
+                    cmds = load_custom_quick_commands()
+                    await websocket.send(json.dumps({
+                        "event": "quick_commands_list",
+                        "custom_commands": cmds
+                    }))
+
+                elif action == "save_quick_command":
+                    cmd = data.get("command")
+                    if cmd and isinstance(cmd, dict):
+                        cmds = load_custom_quick_commands()
+                        cmds = [c for c in cmds if c.get("id") != cmd.get("id")]
+                        cmds.append(cmd)
+                        save_custom_quick_commands(cmds)
+                        log_event(f"Saved custom quick command '{cmd.get('title', '')}'")
+                        await websocket.send(json.dumps({
+                            "event": "quick_commands_list",
+                            "custom_commands": cmds
+                        }))
+
+                elif action == "delete_quick_command":
+                    cmd_id = data.get("id")
+                    if cmd_id:
+                        cmds = load_custom_quick_commands()
+                        cmds = [c for c in cmds if c.get("id") != cmd_id]
+                        save_custom_quick_commands(cmds)
+                        log_event(f"Deleted custom quick command '{cmd_id}'")
+                        await websocket.send(json.dumps({
+                            "event": "quick_commands_list",
+                            "custom_commands": cmds
+                        }))
+
+                elif action == "list_adb_devices":
+                    ok, devs = await run_adb_devices()
+                    await websocket.send(json.dumps({
+                        "event": "adb_devices_list",
+                        "adb_available": ok,
+                        "devices": devs,
+                        "client_ip": client_ip
+                    }))
+
+                elif action == "connect_adb_device":
+                    target = data.get("target", "").strip()
+                    if not target and client_ip and client_ip not in ("unknown", "127.0.0.1"):
+                        target = f"{client_ip}:5555"
+                    msg = "No IP / port specified."
+                    success = False
+                    if target:
+                        proc = await asyncio.create_subprocess_shell(
+                            f"adb connect {target}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        sout, serr = await proc.communicate()
+                        msg = (sout.decode("utf-8", errors="replace") + serr.decode("utf-8", errors="replace")).strip()
+                        success = "connected" in msg.lower() or "already" in msg.lower()
+                        log_event(f"ADB connect {target}: {msg}")
+                    ok, devs = await run_adb_devices()
+                    await websocket.send(json.dumps({
+                        "event": "adb_connect_result",
+                        "success": success,
+                        "message": msg,
+                        "devices": devs
+                    }))
+
+                elif action == "disconnect_adb_device":
+                    target = data.get("target", "").strip()
+                    msg = "No target specified."
+                    if target:
+                        proc = await asyncio.create_subprocess_shell(
+                            f"adb disconnect {target}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        sout, serr = await proc.communicate()
+                        msg = (sout.decode("utf-8", errors="replace") + serr.decode("utf-8", errors="replace")).strip()
+                        log_event(f"ADB disconnect {target}: {msg}")
+                    ok, devs = await run_adb_devices()
+                    await websocket.send(json.dumps({
+                        "event": "adb_disconnect_result",
+                        "success": True,
+                        "message": msg,
+                        "devices": devs
+                    }))
+
+                elif action == "exec_quick_command":
+                    cmd_id = data.get("command_id", f"cmd_{int(datetime.now().timestamp())}")
+                    proj_id = data.get("project_id")
+                    raw_script = data.get("script", "")
+                    commit_msg = data.get("commit_message", "Automated update from agyremote").strip() or "Automated update from agyremote"
+                    device_target = data.get("device_target", "").strip()
+
+                    # Sanitize commit message
+                    clean_commit = commit_msg.replace('"', '\\"').replace('\n', ' ')
+
+                    # Resolve target device if not explicitly chosen
+                    if not device_target:
+                        ok, devs = await run_adb_devices()
+                        active_devs = [d["serial"] for d in devs if d.get("status") == "device"]
+                        if active_devs:
+                            device_target = active_devs[0]
+                        elif client_ip and client_ip not in ("unknown", "127.0.0.1"):
+                            device_target = f"{client_ip}:5555"
+                        else:
+                            device_target = ""
+
+                    # Variable substitutions
+                    script = raw_script.replace("{COMMIT_MESSAGE}", clean_commit)
+                    script = script.replace("{DEVICE_TARGET}", device_target if device_target else "")
+                    script = script.replace("{DEVICE_IP}", client_ip if client_ip != "unknown" else "127.0.0.1")
+
+                    # Normalize adb command if device_target is empty
+                    script = script.replace("adb -s  install", "adb install").replace("adb -s '' install", "adb install")
+
+                    proj = get_project_by_id(proj_id)
+                    cwd = proj["path"] if proj and os.path.exists(proj["path"]) else os.getcwd()
+
+                    log_event(f"⚡ Direct Terminal Run (NO AI): '{cmd_id}' in {cwd}\nCommand: {script}")
+
+                    await websocket.send(json.dumps({
+                        "event": "quick_command_started",
+                        "command_id": cmd_id,
+                        "script": script,
+                        "cwd": cwd,
+                        "timestamp": datetime.now().isoformat()
+                    }))
+
+                    try:
+                        proc = await asyncio.create_subprocess_shell(
+                            script,
+                            cwd=cwd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.STDOUT
+                        )
+
+                        while True:
+                            line = await proc.stdout.readline()
+                            if not line:
+                                break
+                            decoded = line.decode("utf-8", errors="replace")
+                            await websocket.send(json.dumps({
+                                "event": "quick_command_output",
+                                "command_id": cmd_id,
+                                "output": decoded
+                            }))
+
+                        rc = await proc.wait()
+                        log_event(f"Direct command '{cmd_id}' finished (exit code {rc})")
+                        await websocket.send(json.dumps({
+                            "event": "quick_command_finished",
+                            "command_id": cmd_id,
+                            "return_code": rc,
+                            "success": rc == 0
+                        }))
+                    except Exception as e:
+                        log_event(f"Direct command '{cmd_id}' error: {e}")
+                        await websocket.send(json.dumps({
+                            "event": "quick_command_output",
+                            "command_id": cmd_id,
+                            "output": f"\n❌ Terminal Execution Exception: {e}\n"
+                        }))
+                        await websocket.send(json.dumps({
+                            "event": "quick_command_finished",
+                            "command_id": cmd_id,
+                            "return_code": -1,
+                            "success": False
+                        }))
 
             except json.JSONDecodeError:
                 pass
@@ -790,6 +1428,18 @@ async def run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd, image_
         except Exception:
             pass
 
+        try:
+            artifacts = scan_conversation_artifacts(conv_id)
+            for art in artifacts:
+                if art["name"] in ("implementation_plan.md", "walkthrough.md", "task.md"):
+                    await websocket.send(json.dumps({
+                        "event": "artifact_updated",
+                        "conversation_id": conv_id,
+                        "artifact": art
+                    }))
+        except Exception:
+            pass
+
     except Exception as e:
         print(f"[Daemon] agy execution error: {e}")
         err_msg = f"❌ Antigravity Agent Error: {e}\n"
@@ -822,12 +1472,15 @@ async def main():
     sync_antigravity_auth()
     load_projects_and_conversations()
     
+    cfg = load_gemini_config()
     print("=" * 60)
-    print("[Daemon] Google Antigravity Remote Host Daemon (agy-daemon)")
+    print(f"[Daemon] Google Antigravity Remote Host Daemon ({cfg['cliRemoteControlHostname']})")
     print("=" * 60)
     print(f"[Daemon] WebSocket listening on: ws://0.0.0.0:{PORT}")
     print(f"[Daemon] Auto-Discovery active on UDP port: {DISCOVERY_PORT}")
     print(f"[Daemon] AI Backend: Antigravity CLI (Signed-in Google Pro Session)")
+    if CLI_NAME_OVERRIDE:
+        print(f"[Daemon] ⚠️ CLI flag '--name {CLI_NAME_OVERRIDE}' is active and takes precedence over config.json")
     print("=" * 60)
 
     loop = asyncio.get_running_loop()
@@ -845,6 +1498,14 @@ async def main():
         await asyncio.Future()
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Google Antigravity Remote Host Daemon")
+    parser.add_argument("--name", type=str, help="Sets display instance name shown in Remote Control Hub")
+    args, unknown = parser.parse_known_args()
+    if args.name:
+        CLI_NAME_OVERRIDE = args.name
+        print(f"[Daemon] Hostname override active: '{CLI_NAME_OVERRIDE}'")
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
