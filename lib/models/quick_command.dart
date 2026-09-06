@@ -165,7 +165,7 @@ class AdbDevice {
   }
 }
 
-enum ExecutionStatus { idle, running, success, failed }
+enum ExecutionStatus { idle, running, success, failed, cancelled }
 
 class QuickCommandExecution {
   final String commandId;
@@ -174,6 +174,7 @@ class QuickCommandExecution {
   ExecutionStatus status;
   final List<String> logs;
   int? exitCode;
+  String? stoppedAtStep;
   DateTime? startedAt;
   DateTime? completedAt;
 
@@ -184,6 +185,7 @@ class QuickCommandExecution {
     this.status = ExecutionStatus.idle,
     List<String>? logs,
     this.exitCode,
+    this.stoppedAtStep,
     this.startedAt,
     this.completedAt,
   }) : logs = logs ?? [];

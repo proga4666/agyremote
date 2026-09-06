@@ -112,6 +112,19 @@ class QuickCommandProvider extends ChangeNotifier {
     });
   }
 
+  void cancelCommand() {
+    if (activeExecution == null || !isExecuting) return;
+    final cmdId = activeExecution!.commandId;
+    activeExecution!.status = ExecutionStatus.cancelled;
+    activeExecution!.completedAt = DateTime.now();
+    activeExecution!.logs.add('\n[Runner] 🛑 Cancelling command execution on host...\n');
+    notifyListeners();
+
+    bridge.send('cancel_quick_command', {
+      'command_id': cmdId,
+    });
+  }
+
   void clearActiveExecution() {
     activeExecution = null;
     notifyListeners();
@@ -181,15 +194,38 @@ class QuickCommandProvider extends ChangeNotifier {
         }
         break;
 
+      case 'quick_command_cancelled':
+        final cmdId = event['command_id']?.toString();
+        if (activeExecution?.commandId == cmdId) {
+          activeExecution!.status = ExecutionStatus.cancelled;
+          activeExecution!.completedAt = DateTime.now();
+          activeExecution!.logs.add('[Runner] ⏹️ Process successfully stopped.\n');
+          notifyListeners();
+        }
+        break;
+
       case 'quick_command_finished':
         final cmdId = event['command_id']?.toString();
         if (activeExecution?.commandId == cmdId) {
-          final success = event['success'] == true;
+          final isCancelled = event['cancelled'] == true || activeExecution!.status == ExecutionStatus.cancelled;
+          final success = event['success'] == true && !isCancelled;
           final rc = event['return_code'] as int? ?? (success ? 0 : 1);
-          activeExecution!.status = success ? ExecutionStatus.success : ExecutionStatus.failed;
+          final stoppedStep = event['stopped_at']?.toString();
+
+          activeExecution!.status = isCancelled
+              ? ExecutionStatus.cancelled
+              : (success ? ExecutionStatus.success : ExecutionStatus.failed);
           activeExecution!.exitCode = rc;
           activeExecution!.completedAt = DateTime.now();
-          activeExecution!.logs.add('\n----------------------------------------\n[Runner] Process finished with exit code $rc (${success ? "SUCCESS" : "FAILED"})\n');
+          activeExecution!.stoppedAtStep = stoppedStep;
+
+          if (isCancelled) {
+            activeExecution!.logs.add('\n----------------------------------------\n[Runner] Execution CANCELLED by user\n');
+          } else if (success) {
+            activeExecution!.logs.add('\n----------------------------------------\n[Runner] Process finished successfully (exit code 0)\n');
+          } else {
+            activeExecution!.logs.add('\n----------------------------------------\n[Runner] 🛑 Command stopped at step "${stoppedStep ?? "command"}" with exit code $rc\n');
+          }
           notifyListeners();
         }
         break;
