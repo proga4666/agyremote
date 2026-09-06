@@ -418,9 +418,9 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(find.text('WIRELESS DEBUG & ADB DEVICES'), findsOneWidget);
-      expect(find.text('AVAILABLE DEVICES'), findsOneWidget);
-      expect(find.text('WIRELESS CONNECT (IP : PORT)'), findsOneWidget);
+      expect(find.text('WIRELESS CONNECT & DISCONNECT'), findsOneWidget);
       expect(find.text('Connect'), findsOneWidget);
+      expect(find.text('Disconnect'), findsWidgets);
 
       bridge.disconnect();
     });

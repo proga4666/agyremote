@@ -65,13 +65,26 @@ class QuickCommand {
           id: 'cmd_build_apk_push',
           title: 'Build APK & Wireless Install & Push',
           description:
-              'Build Flutter APK, install onto phone via wireless debug (ADB), and Git commit & push.',
+              'Build Flutter APK (Debug / Release), install onto phone via ADB, and Git commit & push.',
           script:
               'flutter build apk --debug && adb -s {DEVICE_TARGET} install -r build/app/outputs/flutter-apk/app-debug.apk && git add . && git commit -m "{COMMIT_MESSAGE}" && git push',
           category: 'adb',
           requiresCommitMessage: true,
           isBuiltIn: true,
           iconName: 'install_mobile_rounded',
+          colorTag: 'purple',
+        ),
+        QuickCommand(
+          id: 'cmd_build_apk_only',
+          title: 'Build APK Only (No Push)',
+          description:
+              'Build Flutter APK in Debug or Release mode without pushing to Git.',
+          script:
+              'flutter build apk --debug',
+          category: 'adb',
+          requiresCommitMessage: false,
+          isBuiltIn: true,
+          iconName: 'build_circle_rounded',
           colorTag: 'purple',
         ),
         QuickCommand(

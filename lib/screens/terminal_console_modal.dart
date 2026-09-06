@@ -207,7 +207,7 @@ class TerminalConsoleModal extends StatefulWidget {
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10),
                           dense: true,
                           value: installToDevice,
-                          activeColor: AntigravityTheme.googlePurple,
+                          activeThumbColor: AntigravityTheme.googlePurple,
                           title: const Text('Install to Device via ADB', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                           subtitle: Text(
                             installToDevice
@@ -265,7 +265,7 @@ class TerminalConsoleModal extends StatefulWidget {
                           contentPadding: const EdgeInsets.symmetric(horizontal: 10),
                           dense: true,
                           value: pushToGit,
-                          activeColor: AntigravityTheme.googleGreen,
+                          activeThumbColor: AntigravityTheme.googleGreen,
                           title: const Text('Push to Git Repository', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                           subtitle: Text(
                             pushToGit
