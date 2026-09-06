@@ -1212,16 +1212,15 @@ async def handle_client(websocket):
 
                 elif action == "disconnect_adb_device":
                     target = data.get("target", "").strip()
-                    msg = "No target specified."
-                    if target:
-                        proc = await asyncio.create_subprocess_shell(
-                            f"adb disconnect {target}",
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
-                        )
-                        sout, serr = await proc.communicate()
-                        msg = (sout.decode("utf-8", errors="replace") + serr.decode("utf-8", errors="replace")).strip()
-                        log_event(f"ADB disconnect {target}: {msg}")
+                    cmd = f"adb disconnect {target}" if target else "adb disconnect"
+                    proc = await asyncio.create_subprocess_shell(
+                        cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    sout, serr = await proc.communicate()
+                    msg = (sout.decode("utf-8", errors="replace") + serr.decode("utf-8", errors="replace")).strip()
+                    log_event(f"ADB disconnect {target or 'all'}: {msg}")
                     ok, devs = await run_adb_devices()
                     await websocket.send(json.dumps({
                         "event": "adb_disconnect_result",
