@@ -767,6 +767,17 @@ All tests completed successfully. Daemon status is active on port 7800.
           });
         });
         break;
+
+      case 'cancel_quick_command':
+        final cmdId = payload['command_id']?.toString() ?? '';
+        Future.microtask(() {
+          _eventController.add({
+            'event': 'quick_command_cancelled',
+            'command_id': cmdId,
+            'message': 'Command execution cancelled by user.',
+          });
+        });
+        break;
     }
   }
 

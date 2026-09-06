@@ -34,6 +34,8 @@ CLI_NAME_OVERRIDE = None
 projects = []
 conversations = {}
 pending_approvals = {}
+active_running_commands = {}
+cancelled_command_ids = set()
 
 def load_custom_quick_commands():
     if os.path.exists(QUICK_COMMANDS_FILE):
@@ -1228,12 +1230,54 @@ async def handle_client(websocket):
                         "devices": devs
                     }))
 
+                elif action == "cancel_quick_command":
+                    target_cmd = data.get("command_id", "").strip()
+                    log_event(f"🛑 Cancel request received for command '{target_cmd}'")
+                    cancelled_command_ids.add(target_cmd)
+                    if target_cmd in active_running_commands:
+                        proc = active_running_commands[target_cmd]
+                        try:
+                            if sys.platform == "win32":
+                                subprocess.run(f"taskkill /F /T /PID {proc.pid}", shell=True, capture_output=True)
+                            else:
+                                proc.kill()
+                        except Exception as e:
+                            print(f"[Daemon] Error terminating PID {proc.pid}: {e}")
+                    await websocket.send(json.dumps({
+                        "event": "quick_command_cancelled",
+                        "command_id": target_cmd,
+                        "message": "Command was cancelled by user."
+                    }))
+
+                elif action == "pair_adb_device":
+                    target = data.get("target", "").strip()
+                    code = data.get("code", "").strip()
+                    msg = "Invalid target or pairing code."
+                    if target and code:
+                        proc = await asyncio.create_subprocess_shell(
+                            f"adb pair {target} {code}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        sout, serr = await proc.communicate()
+                        msg = (sout.decode("utf-8", errors="replace") + serr.decode("utf-8", errors="replace")).strip()
+                        log_event(f"ADB pair {target}: {msg}")
+                    ok, devs = await run_adb_devices()
+                    await websocket.send(json.dumps({
+                        "event": "adb_pair_result",
+                        "success": "successfully" in msg.lower() or "already" in msg.lower(),
+                        "message": msg,
+                        "devices": devs
+                    }))
+
                 elif action == "exec_quick_command":
                     cmd_id = data.get("command_id", f"cmd_{int(datetime.now().timestamp())}")
                     proj_id = data.get("project_id")
                     raw_script = data.get("script", "")
                     commit_msg = data.get("commit_message", "Automated update from agyremote").strip() or "Automated update from agyremote"
                     device_target = data.get("device_target", "").strip()
+
+                    cancelled_command_ids.discard(cmd_id)
 
                     # Sanitize commit message
                     clean_commit = commit_msg.replace('"', '\\"').replace('\n', ' ')
@@ -1270,35 +1314,117 @@ async def handle_client(websocket):
                         "timestamp": datetime.now().isoformat()
                     }))
 
-                    try:
-                        proc = await asyncio.create_subprocess_shell(
-                            script,
-                            cwd=cwd,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.STDOUT
-                        )
+                    # Split multi-part scripts connected by && into discrete, traceable steps
+                    steps = [s.strip() for s in script.split("&&") if s.strip()]
+                    if not steps:
+                        steps = [script]
 
-                        while True:
-                            line = await proc.stdout.readline()
-                            if not line:
+                    final_rc = 0
+                    stopped_step_name = None
+                    was_cancelled = False
+
+                    # Disable git interactive prompts so it never freezes
+                    cmd_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "PYTHONUNBUFFERED": "1"}
+
+                    try:
+                        for step_idx, step_cmd in enumerate(steps, 1):
+                            if cmd_id in cancelled_command_ids:
+                                was_cancelled = True
                                 break
-                            decoded = line.decode("utf-8", errors="replace")
+
+                            step_header = f"\n▶ [Step {step_idx}/{len(steps)}] {step_cmd}\n"
                             await websocket.send(json.dumps({
                                 "event": "quick_command_output",
                                 "command_id": cmd_id,
-                                "output": decoded
+                                "output": step_header
                             }))
 
-                        rc = await proc.wait()
-                        log_event(f"Direct command '{cmd_id}' finished (exit code {rc})")
-                        await websocket.send(json.dumps({
-                            "event": "quick_command_finished",
-                            "command_id": cmd_id,
-                            "return_code": rc,
-                            "success": rc == 0
-                        }))
+                            proc = await asyncio.create_subprocess_shell(
+                                step_cmd,
+                                cwd=cwd,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.STDOUT,
+                                env=cmd_env
+                            )
+                            active_running_commands[cmd_id] = proc
+
+                            step_output_acc = []
+                            while True:
+                                line = await proc.stdout.readline()
+                                if not line:
+                                    break
+                                decoded = line.decode("utf-8", errors="replace")
+                                step_output_acc.append(decoded)
+                                await websocket.send(json.dumps({
+                                    "event": "quick_command_output",
+                                    "command_id": cmd_id,
+                                    "output": decoded
+                                }))
+
+                            rc = await proc.wait()
+                            full_step_out = "".join(step_output_acc).lower()
+
+                            if cmd_id in cancelled_command_ids:
+                                was_cancelled = True
+                                await websocket.send(json.dumps({
+                                    "event": "quick_command_output",
+                                    "command_id": cmd_id,
+                                    "output": f"\n⏹️ [Step {step_idx}] Cancelled by user.\n"
+                                }))
+                                break
+
+                            # Special handling for git commit: if working tree is clean, exit code 1 is normal; proceed to push!
+                            if rc != 0 and step_cmd.startswith("git commit") and ("nothing to commit" in full_step_out or "working tree clean" in full_step_out):
+                                await websocket.send(json.dumps({
+                                    "event": "quick_command_output",
+                                    "command_id": cmd_id,
+                                    "output": "\nℹ️ [Runner] Working tree is clean (nothing new to commit). Continuing to next step...\n"
+                                }))
+                                rc = 0
+
+                            if rc != 0:
+                                final_rc = rc
+                                stopped_step_name = step_cmd
+                                await websocket.send(json.dumps({
+                                    "event": "quick_command_output",
+                                    "command_id": cmd_id,
+                                    "output": f"\n❌ [Step {step_idx} FAILED] '{step_cmd}' stopped with exit code {rc}\n"
+                                }))
+                                break
+                            else:
+                                await websocket.send(json.dumps({
+                                    "event": "quick_command_output",
+                                    "command_id": cmd_id,
+                                    "output": f"✓ [Step {step_idx}] Completed.\n"
+                                }))
+
+                        active_running_commands.pop(cmd_id, None)
+
+                        if was_cancelled:
+                            log_event(f"Direct command '{cmd_id}' CANCELLED by user")
+                            await websocket.send(json.dumps({
+                                "event": "quick_command_finished",
+                                "command_id": cmd_id,
+                                "return_code": -1,
+                                "success": False,
+                                "cancelled": True,
+                                "stopped_at": "Cancelled by user"
+                            }))
+                        else:
+                            success = (final_rc == 0)
+                            log_event(f"Direct command '{cmd_id}' finished (exit code {final_rc})")
+                            await websocket.send(json.dumps({
+                                "event": "quick_command_finished",
+                                "command_id": cmd_id,
+                                "return_code": final_rc,
+                                "success": success,
+                                "cancelled": False,
+                                "stopped_at": stopped_step_name
+                            }))
+
                     except Exception as e:
-                        log_event(f"Direct command '{cmd_id}' error: {e}")
+                        active_running_commands.pop(cmd_id, None)
+                        log_event(f"Direct command '{cmd_id}' exception: {e}")
                         await websocket.send(json.dumps({
                             "event": "quick_command_output",
                             "command_id": cmd_id,
@@ -1308,7 +1434,9 @@ async def handle_client(websocket):
                             "event": "quick_command_finished",
                             "command_id": cmd_id,
                             "return_code": -1,
-                            "success": False
+                            "success": False,
+                            "cancelled": False,
+                            "stopped_at": "Execution Exception"
                         }))
 
             except json.JSONDecodeError:
