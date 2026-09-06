@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +7,13 @@ import '../models/quick_command.dart';
 import '../providers/project_provider.dart';
 import '../providers/quick_command_provider.dart';
 import '../widgets/adb_device_sheet.dart';
+
+class _BuildConfigResult {
+  final QuickCommand command;
+  final String? commitMessage;
+
+  _BuildConfigResult({required this.command, this.commitMessage});
+}
 
 class TerminalConsoleModal extends StatefulWidget {
   final QuickCommand initialCommand;
@@ -22,8 +30,14 @@ class TerminalConsoleModal extends StatefulWidget {
     required QuickCommand command,
     bool autoRun = true,
   }) async {
-    // If command requires commit message, prompt first
-    if (command.requiresCommitMessage && autoRun) {
+    // Check if command is a Flutter build command
+    if (command.category == 'adb' || command.id.contains('build') || command.script.contains('build apk')) {
+      final config = await _promptBuildConfig(context, command);
+      if (config == null) return; // User cancelled
+
+      if (!context.mounted) return;
+      _launchConsole(context, config.command, commitMessage: config.commitMessage);
+    } else if (command.requiresCommitMessage && autoRun) {
       final commitMsg = await _promptCommitMessage(context, command);
       if (commitMsg == null) return; // User cancelled
 
@@ -62,107 +76,349 @@ class TerminalConsoleModal extends StatefulWidget {
     );
   }
 
-  static Future<String?> _promptCommitMessage(BuildContext context, QuickCommand command) async {
-    final controller = TextEditingController(text: 'feat: update from agyremote');
+  static Future<_BuildConfigResult?> _promptBuildConfig(BuildContext context, QuickCommand command) async {
     final quickProvider = context.read<QuickCommandProvider>();
+    bool isRelease = false;
+    bool installToDevice = quickProvider.selectedAdbDevice != null || quickProvider.adbDevices.isNotEmpty;
+    bool pushToGit = command.id.contains('push');
+    final commitController = TextEditingController(text: 'feat: build apk update');
 
-    return showDialog<String>(
+    return showDialog<_BuildConfigResult>(
       context: context,
       builder: (dialogCtx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: AntigravityTheme.surface,
-          title: Row(
-            children: [
-              const Icon(Icons.commit_rounded, color: AntigravityTheme.googleGreen, size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  command.title,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+        builder: (context, setDialogState) {
+          final modeStr = isRelease ? 'release' : 'debug';
+          
+          // Construct command preview
+          String generatedScript = 'flutter build apk --$modeStr';
+          if (installToDevice) {
+            generatedScript += ' && adb {DEVICE_TARGET} install -r build/app/outputs/flutter-apk/app-$modeStr.apk';
+          }
+          if (pushToGit) {
+            generatedScript += ' && git add . && git commit -m "{COMMIT_MESSAGE}" && git push';
+          }
+
+          return AlertDialog(
+            backgroundColor: AntigravityTheme.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: const Row(
               children: [
-                const Text(
-                  'Enter Git commit message:',
-                  style: TextStyle(fontSize: 12, color: AntigravityTheme.textSecondary),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  maxLines: 2,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. feat: complete tab separation',
-                    isDense: true,
+                Icon(Icons.build_circle_rounded, color: AntigravityTheme.googlePurple, size: 22),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Build APK Configuration',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
-                if (command.category == 'adb') ...[
-                  const SizedBox(height: 14),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'BUILD MODE',
+                    style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, letterSpacing: 0.8, color: AntigravityTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Icon(Icons.install_mobile_rounded, size: 14, color: AntigravityTheme.googlePurple),
-                      const SizedBox(width: 6),
-                      const Text(
-                        'Target Wireless Phone:',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AntigravityTheme.textSecondary),
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setDialogState(() => isRelease = false),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: !isRelease ? AntigravityTheme.googlePurple.withValues(alpha: 0.18) : AntigravityTheme.surfaceContainer,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: !isRelease ? AntigravityTheme.googlePurple : AntigravityTheme.borderSubtle,
+                                width: !isRelease ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.bug_report_rounded, size: 16, color: !isRelease ? AntigravityTheme.googlePurple : AntigravityTheme.textMuted),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Debug',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: !isRelease ? FontWeight.bold : FontWeight.w500,
+                                    color: !isRelease ? Colors.white : AntigravityTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        onPressed: () {
-                          Navigator.pop(dialogCtx);
-                          AdbDeviceSheet.show(context);
-                        },
-                        child: const Text('Change', style: TextStyle(fontSize: 11, color: AntigravityTheme.googlePurple)),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setDialogState(() => isRelease = true),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: isRelease ? AntigravityTheme.googlePurple.withValues(alpha: 0.18) : AntigravityTheme.surfaceContainer,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isRelease ? AntigravityTheme.googlePurple : AntigravityTheme.borderSubtle,
+                                width: isRelease ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.rocket_launch_rounded, size: 16, color: isRelease ? AntigravityTheme.googlePurple : AntigravityTheme.textMuted),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Release',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isRelease ? FontWeight.bold : FontWeight.w500,
+                                    color: isRelease ? Colors.white : AntigravityTheme.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Wireless ADB Install Toggle
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AntigravityTheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AntigravityTheme.borderSubtle),
+                    ),
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                          dense: true,
+                          value: installToDevice,
+                          activeColor: AntigravityTheme.googlePurple,
+                          title: const Text('Install to Device via ADB', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                          subtitle: Text(
+                            installToDevice
+                                ? (quickProvider.selectedAdbDevice?.displayName ?? 'Auto-detecting on Wi-Fi...')
+                                : 'Build APK only (skip installation)',
+                            style: const TextStyle(fontSize: 10.5, color: AntigravityTheme.textMuted),
+                          ),
+                          onChanged: (val) => setDialogState(() => installToDevice = val),
+                        ),
+                        if (installToDevice) ...[
+                          const Divider(height: 1, color: AntigravityTheme.borderSubtle),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.install_mobile_rounded, size: 13, color: AntigravityTheme.googlePurple),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    quickProvider.selectedAdbDevice?.serial ?? 'No device chosen',
+                                    style: const TextStyle(fontSize: 10.5, color: Colors.white, fontFamily: 'monospace'),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  onPressed: () {
+                                    AdbDeviceSheet.show(context);
+                                  },
+                                  child: const Text('Manage Devices', style: TextStyle(fontSize: 10.5, color: AntigravityTheme.googlePurple)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Git Push Toggle
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AntigravityTheme.surfaceContainer,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AntigravityTheme.borderSubtle),
+                    ),
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                          dense: true,
+                          value: pushToGit,
+                          activeColor: AntigravityTheme.googleGreen,
+                          title: const Text('Push to Git Repository', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                          subtitle: Text(
+                            pushToGit
+                                ? 'Stage, commit, and push to origin'
+                                : 'Only build APK (no git commit or push)',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: pushToGit ? AntigravityTheme.textMuted : AntigravityTheme.googleAmber,
+                            ),
+                          ),
+                          onChanged: (val) => setDialogState(() => pushToGit = val),
+                        ),
+                        if (pushToGit) ...[
+                          const Divider(height: 1, color: AntigravityTheme.borderSubtle),
+                          Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: TextField(
+                              controller: commitController,
+                              style: const TextStyle(fontSize: 12),
+                              decoration: const InputDecoration(
+                                labelText: 'Git Commit Message',
+                                hintText: 'e.g. feat: new release build',
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Script Preview
+                  const Text(
+                    'COMMAND PREVIEW',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.6, color: AntigravityTheme.textMuted),
                   ),
                   const SizedBox(height: 4),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: AntigravityTheme.surfaceContainer,
+                      color: const Color(0xFF0C0D0E),
                       borderRadius: BorderRadius.circular(6),
                       border: Border.all(color: AntigravityTheme.borderSubtle),
                     ),
                     child: Text(
-                      quickProvider.selectedAdbDevice?.displayName ?? 'Auto-detecting on Wi-Fi...',
-                      style: const TextStyle(fontSize: 11, color: Colors.white, fontFamily: 'monospace'),
+                      generatedScript,
+                      style: const TextStyle(fontSize: 10, fontFamily: 'monospace', color: AntigravityTheme.googleBlue),
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogCtx, null),
-              child: const Text('Cancel', style: TextStyle(color: AntigravityTheme.textSecondary)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AntigravityTheme.googleGreen,
-                foregroundColor: Colors.black,
               ),
-              onPressed: () {
-                final text = controller.text.trim();
-                Navigator.pop(dialogCtx, text.isEmpty ? 'Automated update from agyremote' : text);
-              },
-              child: const Text('Execute Command', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogCtx, null),
+                child: const Text('Cancel', style: TextStyle(color: AntigravityTheme.textSecondary)),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AntigravityTheme.googlePurple,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                ),
+                icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                label: const Text('Start Build', style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () {
+                  final customCmd = QuickCommand(
+                    id: 'cmd_build_${modeStr}_${DateTime.now().millisecondsSinceEpoch}',
+                    title: 'Build APK (${modeStr.toUpperCase()}${pushToGit ? " & Push" : ""})',
+                    description: 'Flutter build APK $modeStr mode',
+                    script: generatedScript,
+                    category: 'adb',
+                    requiresCommitMessage: pushToGit,
+                    isBuiltIn: false,
+                    colorTag: 'purple',
+                  );
+
+                  Navigator.pop(
+                    dialogCtx,
+                    _BuildConfigResult(
+                      command: customCmd,
+                      commitMessage: pushToGit ? commitController.text.trim() : null,
+                    ),
+                  );
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  static Future<String?> _promptCommitMessage(BuildContext context, QuickCommand command) async {
+    final controller = TextEditingController(text: 'feat: update from agyremote');
+
+    return showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AntigravityTheme.surface,
+        title: Row(
+          children: [
+            const Icon(Icons.commit_rounded, color: AntigravityTheme.googleGreen, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                command.title,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
             ),
           ],
         ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter Git commit message:',
+                style: TextStyle(fontSize: 12, color: AntigravityTheme.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. feat: complete tab separation',
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, null),
+            child: const Text('Cancel', style: TextStyle(color: AntigravityTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AntigravityTheme.googleGreen,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () {
+              final text = controller.text.trim();
+              Navigator.pop(dialogCtx, text.isEmpty ? 'Automated update from agyremote' : text);
+            },
+            child: const Text('Execute Command', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
@@ -173,10 +429,21 @@ class TerminalConsoleModal extends StatefulWidget {
 
 class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
   final ScrollController _scrollController = ScrollController();
+  Timer? _durationTimer;
 
   @override
   void initState() {
     super.initState();
+    // Live ticking timer for elapsed duration while executing
+    _durationTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (mounted) {
+        final isRunning = context.read<QuickCommandProvider>().isExecuting;
+        if (isRunning) {
+          setState(() {});
+        }
+      }
+    });
+
     if (widget.autoRun) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final proj = context.read<ProjectProvider>().selectedProject;
@@ -190,6 +457,7 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
 
   @override
   void dispose() {
+    _durationTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -214,17 +482,21 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
         ? AntigravityTheme.textMuted
         : exec.status == ExecutionStatus.running
             ? AntigravityTheme.googleAmber
-            : exec.status == ExecutionStatus.success
-                ? AntigravityTheme.googleGreen
-                : AntigravityTheme.googleRed;
+            : exec.status == ExecutionStatus.cancelled
+                ? AntigravityTheme.googleAmber
+                : exec.status == ExecutionStatus.success
+                    ? AntigravityTheme.googleGreen
+                    : AntigravityTheme.googleRed;
 
     final statusLabel = exec == null
         ? 'IDLE'
         : exec.status == ExecutionStatus.running
             ? 'RUNNING'
-            : exec.status == ExecutionStatus.success
-                ? 'SUCCESS (Code 0)'
-                : 'FAILED (Code ${exec.exitCode ?? 1})';
+            : exec.status == ExecutionStatus.cancelled
+                ? 'CANCELLED BY USER'
+                : exec.status == ExecutionStatus.success
+                    ? 'SUCCESS (Exit Code 0)'
+                    : 'STOPPED AT: ${exec.stoppedAtStep ?? "Error"} (Code ${exec.exitCode ?? 1})';
 
     return Container(
       height: MediaQuery.of(context).size.height * 0.85,
@@ -317,11 +589,13 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  statusLabel,
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor),
+                Expanded(
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                const Spacer(),
                 if (exec != null) ...[
                   const Icon(Icons.timer_outlined, size: 13, color: AntigravityTheme.textMuted),
                   const SizedBox(width: 4),
@@ -352,10 +626,21 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
                   itemBuilder: (context, index) {
                     final line = exec!.logs[index];
                     Color textColor = AntigravityTheme.textPrimary;
+                    FontWeight fontWeight = FontWeight.normal;
+
                     if (line.contains('❌') || line.contains('FAILED') || line.contains('error')) {
                       textColor = AntigravityTheme.googleRed;
-                    } else if (line.contains('✓') || line.contains('SUCCESS') || line.contains('[git]')) {
+                      fontWeight = FontWeight.bold;
+                    } else if (line.contains('✓') || line.contains('SUCCESS') || line.contains('✅') || line.contains('[git]')) {
                       textColor = AntigravityTheme.googleGreen;
+                    } else if (line.contains('▶ [Step')) {
+                      textColor = AntigravityTheme.googleBlue;
+                      fontWeight = FontWeight.bold;
+                    } else if (line.contains('⏹️') || line.contains('🛑') || line.contains('CANCELLED')) {
+                      textColor = AntigravityTheme.googleAmber;
+                      fontWeight = FontWeight.bold;
+                    } else if (line.contains('ℹ️')) {
+                      textColor = AntigravityTheme.googlePurple;
                     } else if (line.contains('[Runner]')) {
                       textColor = AntigravityTheme.googleBlue;
                     }
@@ -366,6 +651,7 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
                         fontSize: 11,
                         fontFamily: 'monospace',
                         color: textColor,
+                        fontWeight: fontWeight,
                         height: 1.3,
                       ),
                     );
@@ -393,14 +679,34 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
                   );
                 },
               ),
-              if (widget.initialCommand.category == 'adb')
+              if (widget.initialCommand.category == 'adb' || widget.initialCommand.id.contains('build'))
                 IconButton(
                   icon: const Icon(Icons.install_mobile_rounded, size: 18, color: AntigravityTheme.googlePurple),
                   tooltip: 'ADB Device Settings',
                   onPressed: () => AdbDeviceSheet.show(context),
                 ),
               const Spacer(),
-              if (!cmdProvider.isExecuting) ...[
+              if (cmdProvider.isExecuting) ...[
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AntigravityTheme.googleRed,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
+                  icon: const Icon(Icons.stop_circle_outlined, size: 16),
+                  label: const Text('Cancel Command', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () => cmdProvider.cancelCommand(),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AntigravityTheme.border),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Background', style: TextStyle(fontSize: 12, color: AntigravityTheme.textSecondary)),
+                ),
+              ] else ...[
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: AntigravityTheme.border),
@@ -416,16 +722,16 @@ class _TerminalConsoleModalState extends State<TerminalConsoleModal> {
                   },
                 ),
                 const SizedBox(width: 8),
-              ],
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AntigravityTheme.surfaceContainerHigh,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AntigravityTheme.surfaceContainerHigh,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Close', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
-                onPressed: () => Navigator.pop(context),
-                child: Text(cmdProvider.isExecuting ? 'Background' : 'Close', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-              ),
+              ],
             ],
           ),
         ],
