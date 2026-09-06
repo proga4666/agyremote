@@ -314,7 +314,7 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(find.byType(HomeScreen), findsOneWidget);
-      expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
       expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
       expect(find.text('Push'), findsOneWidget);
       expect(find.text('Build & Push'), findsOneWidget);

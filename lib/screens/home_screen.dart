@@ -86,39 +86,95 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-          // Daemon Dashboard Button
-          IconButton(
-            icon: const Icon(Icons.dns_rounded, color: AntigravityTheme.googleBlue, size: 20),
-            tooltip: 'Headless Daemon Manager',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const DaemonDashboardScreen()),
-              );
-            },
-          ),
-          // Wireless ADB Devices
-          IconButton(
-            icon: const Icon(Icons.install_mobile_rounded, color: AntigravityTheme.googlePurple, size: 20),
-            tooltip: 'Wireless Debug & ADB Devices',
-            onPressed: () => AdbDeviceSheet.show(context),
-          ),
-          // New Project Button
-          IconButton(
-            icon: const Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.textSecondary, size: 20),
-            tooltip: 'New Project (Select Host Folder)',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProjectCreateScreen()),
-              );
-            },
-          ),
           // New Conversation Button
           IconButton(
             icon: const Icon(Icons.add_comment_outlined, color: AntigravityTheme.googleGreen, size: 20),
             tooltip: 'New Task / Session',
             onPressed: () => _showNewConversationDialog(context, projProvider, chatProvider),
+          ),
+          // Overflow Menu for Tools & Utilities
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: AntigravityTheme.textSecondary, size: 20),
+            color: AntigravityTheme.surfaceContainer,
+            tooltip: 'More Actions',
+            onSelected: (value) {
+              switch (value) {
+                case 'adb':
+                  AdbDeviceSheet.show(context);
+                  break;
+                case 'daemon':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DaemonDashboardScreen()),
+                  );
+                  break;
+                case 'new_project':
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProjectCreateScreen()),
+                  );
+                  break;
+                case 'switch_host':
+                  _showHostSwitcherModal(context, connProvider);
+                  break;
+                case 'refresh':
+                  projProvider.fetchProjects();
+                  break;
+              }
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'adb',
+                child: Row(
+                  children: [
+                    Icon(Icons.install_mobile_rounded, color: AntigravityTheme.googlePurple, size: 18),
+                    SizedBox(width: 10),
+                    Text('Wireless Debug & ADB', style: TextStyle(fontSize: 13, color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'daemon',
+                child: Row(
+                  children: [
+                    Icon(Icons.dns_rounded, color: AntigravityTheme.googleBlue, size: 18),
+                    SizedBox(width: 10),
+                    Text('Headless Daemon Manager', style: TextStyle(fontSize: 13, color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'new_project',
+                child: Row(
+                  children: [
+                    Icon(Icons.create_new_folder_outlined, color: AntigravityTheme.textSecondary, size: 18),
+                    SizedBox(width: 10),
+                    Text('New Project Folder', style: TextStyle(fontSize: 13, color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'switch_host',
+                child: Row(
+                  children: [
+                    Icon(Icons.devices_rounded, color: AntigravityTheme.googleGreen, size: 18),
+                    SizedBox(width: 10),
+                    Text('Switch Host PC', style: TextStyle(fontSize: 13, color: Colors.white)),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'refresh',
+                child: Row(
+                  children: [
+                    Icon(Icons.refresh, color: AntigravityTheme.textSecondary, size: 18),
+                    SizedBox(width: 10),
+                    Text('Refresh Workspace', style: TextStyle(fontSize: 13, color: Colors.white)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -163,10 +219,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildProjectSelector(BuildContext context, ProjectProvider projProvider, ChatProvider chatProvider) {
     if (projProvider.projects.isEmpty) {
-      return TextButton.icon(
-        onPressed: () => projProvider.fetchProjects(),
-        icon: const Icon(Icons.sync, size: 16, color: AntigravityTheme.googleBlue),
-        label: const Text('Fetch Projects', style: TextStyle(color: Colors.white, fontSize: 14)),
+      return InkWell(
+        onTap: () => projProvider.fetchProjects(),
+        borderRadius: BorderRadius.circular(8),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.sync, size: 16, color: AntigravityTheme.googleBlue),
+              SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Fetch Projects',
+                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -176,8 +248,45 @@ class _HomeScreenState extends State<HomeScreen> {
         isExpanded: true,
         dropdownColor: AntigravityTheme.surfaceContainer,
         icon: const Icon(Icons.arrow_drop_down, color: AntigravityTheme.googleBlue),
+        selectedItemBuilder: (BuildContext context) {
+          return projProvider.projects.map((Project p) {
+            final activeTask = chatProvider.activeConversation?.title;
+            final isSelected = p.id == projProvider.selectedProject?.id;
+            return Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      p.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (activeTask != null && isSelected) ...[
+                    const SizedBox(width: 5),
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: AntigravityTheme.googleGreen,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }).toList();
+        },
         items: projProvider.projects.map((Project p) {
           final activeTask = chatProvider.activeConversation?.title;
+          final isSelected = p.id == projProvider.selectedProject?.id;
           return DropdownMenuItem<String>(
             value: p.id,
             child: Column(
@@ -186,29 +295,36 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    Expanded(
                       child: Text(
                         p.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 14,
+                        style: TextStyle(
+                          color: isSelected ? AntigravityTheme.googleBlue : Colors.white,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (activeTask != null && p.id == projProvider.selectedProject?.id) ...[
-                      const Text(' • ', style: TextStyle(color: AntigravityTheme.textSecondary, fontSize: 11)),
-                      Flexible(
+                    if (activeTask != null && isSelected) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: AntigravityTheme.googleGreen.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
                         child: Text(
                           activeTask,
-                          style: const TextStyle(color: AntigravityTheme.googleGreen, fontSize: 12),
+                          style: const TextStyle(color: AntigravityTheme.googleGreen, fontSize: 10, fontWeight: FontWeight.w600),
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
                   ],
                 ),
+                const SizedBox(height: 2),
                 Text(
                   p.path,
                   style: const TextStyle(
@@ -753,8 +869,8 @@ class _HomeScreenState extends State<HomeScreen> {
       onTap: () => _showHostSwitcherModal(context, conn),
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: BoxDecoration(
           color: isConnected
               ? AntigravityTheme.surfaceContainerHigh
@@ -779,7 +895,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     : AntigravityTheme.googleAmber,
               ),
             ),
-            const SizedBox(width: 5),
+            const SizedBox(width: 4),
             Icon(
               Icons.computer_rounded,
               size: 13,
@@ -787,11 +903,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 4),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 80),
+              constraints: const BoxConstraints(maxWidth: 65),
               child: Text(
                 hostLabel,
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
