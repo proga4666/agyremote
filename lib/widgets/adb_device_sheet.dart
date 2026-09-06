@@ -208,11 +208,18 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (dev.isWireless)
-                          IconButton(
-                            icon: const Icon(Icons.link_off_rounded, size: 18, color: AntigravityTheme.googleRed),
-                            tooltip: 'Disconnect',
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: AntigravityTheme.googleRed,
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            icon: const Icon(Icons.link_off_rounded, size: 14),
+                            label: const Text('Disconnect', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                             onPressed: () => provider.disconnectAdbDevice(dev.serial),
                           ),
+                        const SizedBox(width: 4),
                         if (isSelected)
                           const Icon(Icons.check_circle_rounded, size: 20, color: AntigravityTheme.googlePurple)
                         else
@@ -235,9 +242,26 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
           }),
 
             const SizedBox(height: 16),
-            const Text(
-              'WIRELESS CONNECT (IP : PORT)',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AntigravityTheme.textSecondary),
+            Row(
+              children: [
+                const Text(
+                  'WIRELESS CONNECT & DISCONNECT',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AntigravityTheme.textSecondary),
+                ),
+                const Spacer(),
+                if (provider.adbDevices.any((d) => d.isWireless))
+                  InkWell(
+                    onTap: () => provider.disconnectAdbDevice(''),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.link_off_rounded, size: 12, color: AntigravityTheme.googleRed),
+                        SizedBox(width: 3),
+                        Text('Disconnect All', style: TextStyle(fontSize: 10.5, color: AntigravityTheme.googleRed, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
 
@@ -254,20 +278,34 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AntigravityTheme.googlePurple,
                     foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   ),
-                  icon: const Icon(Icons.link_rounded, size: 16),
-                  label: const Text('Connect', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  icon: const Icon(Icons.link_rounded, size: 15),
+                  label: const Text('Connect', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                   onPressed: () {
                     final target = _targetController.text.trim();
                     if (target.isNotEmpty) {
                       provider.connectAdbDevice(target);
                     }
+                  },
+                ),
+                const SizedBox(width: 6),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AntigravityTheme.googleRed),
+                    foregroundColor: AntigravityTheme.googleRed,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  ),
+                  icon: const Icon(Icons.link_off_rounded, size: 15),
+                  label: const Text('Disconnect', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    final target = _targetController.text.trim();
+                    provider.disconnectAdbDevice(target);
                   },
                 ),
               ],
@@ -294,7 +332,28 @@ class _AdbDeviceSheetState extends State<AdbDeviceSheet> {
               ),
             ],
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AntigravityTheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 13, color: AntigravityTheme.textMuted),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Direct host ADB commands: adb devices -l, adb connect, adb disconnect',
+                      style: TextStyle(fontSize: 9.5, color: AntigravityTheme.textMuted),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
