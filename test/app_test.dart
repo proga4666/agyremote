@@ -224,6 +224,51 @@ void main() {
 
       bridge.disconnect();
     });
+
+    test('QuickCommandProvider handles direct host terminal execution (without AI)', () async {
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      final quick = QuickCommandProvider(bridge: bridge);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(quick.allCommands.isNotEmpty, true);
+
+      final gitPush = quick.allCommands.firstWhere((c) => c.id == 'cmd_git_push');
+      quick.runCommand(gitPush, projectId: 'proj_agyremote', commitMessage: 'test commit');
+
+      expect(quick.isExecuting, true);
+      expect(quick.activeExecution?.commandId, 'cmd_git_push');
+
+      // Wait for simulated streaming execution
+      await Future.delayed(const Duration(milliseconds: 600));
+
+      expect(quick.isExecuting, false);
+      expect(quick.activeExecution?.status, ExecutionStatus.success);
+      expect(quick.activeExecution?.logs.any((l) => l.contains('[git]')), true);
+
+      bridge.disconnect();
+    });
+
+    test('QuickCommandProvider handles ADB devices listing, connect, and disconnect', () async {
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      final quick = QuickCommandProvider(bridge: bridge);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(quick.adbDevices.isNotEmpty, true);
+      expect(quick.selectedAdbDevice, isNotNull);
+
+      quick.connectAdbDevice('192.168.1.200:5555');
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(quick.adbDevices.any((d) => d.serial == '192.168.1.200:5555'), true);
+
+      quick.disconnectAdbDevice('192.168.1.200:5555');
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      bridge.disconnect();
+    });
   });
 
   group('Widget Tests', () {
@@ -248,7 +293,7 @@ void main() {
       expect(find.textContaining('var x = 2;'), findsOneWidget);
     });
 
-    testWidgets('HomeScreen renders with providers', (tester) async {
+    testWidgets('HomeScreen renders with providers and quick commands bar', (tester) async {
       final bridge = BridgeClient();
       bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
 
@@ -258,6 +303,7 @@ void main() {
             ChangeNotifierProvider(create: (_) => ConnectionProvider(bridge: bridge)),
             ChangeNotifierProvider(create: (_) => ProjectProvider(bridge: bridge)..fetchProjects()),
             ChangeNotifierProvider(create: (_) => ChatProvider(bridge: bridge)),
+            ChangeNotifierProvider(create: (_) => QuickCommandProvider(bridge: bridge)),
           ],
           child: MaterialApp(
             theme: AntigravityTheme.darkTheme,
@@ -270,6 +316,10 @@ void main() {
       expect(find.byType(HomeScreen), findsOneWidget);
       expect(find.byIcon(Icons.create_new_folder_outlined), findsOneWidget);
       expect(find.byIcon(Icons.add_comment_outlined), findsOneWidget);
+      expect(find.text('Push'), findsOneWidget);
+      expect(find.text('Build & Push'), findsOneWidget);
+      expect(find.text('Pub Get'), findsOneWidget);
+      expect(find.text('Test'), findsOneWidget);
 
       bridge.disconnect();
     });
@@ -348,6 +398,29 @@ void main() {
       expect(find.text('MACHINE NAMING & CONFIGURATION'), findsOneWidget);
       expect(find.text('GOOGLE SIGN-IN & AUTHENTICATION'), findsOneWidget);
       expect(find.text('REMOTE TROUBLESHOOTING & DIAGNOSTICS'), findsOneWidget);
+
+      bridge.disconnect();
+    });
+
+    testWidgets('AdbDeviceSheet renders available devices and controls', (tester) async {
+      final bridge = BridgeClient();
+      bridge.connect('ws://127.0.0.1:7800/ws', forceMock: true);
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider(
+          create: (_) => QuickCommandProvider(bridge: bridge),
+          child: const MaterialApp(
+            themeMode: ThemeMode.dark,
+            home: Scaffold(body: AdbDeviceSheet()),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      expect(find.text('WIRELESS DEBUG & ADB DEVICES'), findsOneWidget);
+      expect(find.text('AVAILABLE DEVICES'), findsOneWidget);
+      expect(find.text('WIRELESS CONNECT (IP : PORT)'), findsOneWidget);
+      expect(find.text('Connect'), findsOneWidget);
 
       bridge.disconnect();
     });
