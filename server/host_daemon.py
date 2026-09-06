@@ -315,6 +315,8 @@ def clean_transcript_text(text):
         return ""
     cleaned = re.sub(r"<ADDITIONAL_METADATA>.*?</ADDITIONAL_METADATA>", "", text, flags=re.DOTALL)
     cleaned = re.sub(r"<SYSTEM_MESSAGE>.*?</SYSTEM_MESSAGE>", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"<USER_SETTINGS_CHANGE>.*?</USER_SETTINGS_CHANGE>", "", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"<conversation_summaries>.*?</conversation_summaries>", "", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"</?USER_REQUEST>", "", cleaned)
     cleaned = re.sub(r"</?CHECKPOINT[^>]*>", "", cleaned)
     return cleaned.strip()
@@ -508,6 +510,7 @@ def load_projects_and_conversations():
                         step = json.loads(line)
                         stype = step.get("type")
                         content = step.get("content", "")
+                        step_ts = step.get("created_at") or step.get("timestamp") or mtime
 
                         if stype == "USER_INPUT" and content:
                             clean_text = clean_transcript_text(content)
@@ -518,16 +521,25 @@ def load_projects_and_conversations():
                                     "id": f"msg_{len(messages)}_{conv_id[:8]}",
                                     "sender": "user",
                                     "content": clean_text,
-                                    "timestamp": step.get("timestamp") or mtime
+                                    "timestamp": step_ts
                                 })
 
-                        elif stype == "PLANNER_RESPONSE" and content:
-                            messages.append({
-                                "id": f"msg_{len(messages)}_{conv_id[:8]}",
-                                "sender": "agent",
-                                "content": content,
-                                "timestamp": step.get("timestamp") or mtime
-                            })
+                        elif stype == "PLANNER_RESPONSE":
+                            thinking = step.get("thinking", "")
+                            if thinking and thinking.strip():
+                                messages.append({
+                                    "id": f"msg_th_{len(messages)}_{conv_id[:8]}",
+                                    "sender": "thought",
+                                    "content": thinking.strip(),
+                                    "timestamp": step_ts
+                                })
+                            if content and content.strip():
+                                messages.append({
+                                    "id": f"msg_{len(messages)}_{conv_id[:8]}",
+                                    "sender": "agent",
+                                    "content": content,
+                                    "timestamp": step_ts
+                                })
 
                     except json.JSONDecodeError:
                         continue
@@ -540,13 +552,18 @@ def load_projects_and_conversations():
                 source = "desktop_ide" if is_ide else "daemon"
                 engine = "Desktop IDE" if is_ide else "Antigravity 2.0"
 
+                first_ts = messages[0].get("timestamp") if messages else mtime
+                last_ts = messages[-1].get("timestamp") if messages else mtime
+
                 discovered_convs[conv_id] = {
                     "id": conv_id,
                     "project_id": proj_id,
                     "workspace_path": ws_path,
                     "title": title,
                     "messages": messages,
-                    "created_at": mtime,
+                    "created_at": first_ts,
+                    "updated_at": last_ts,
+                    "last_message_at": last_ts,
                     "is_pc_synced": True,
                     "source": source,
                     "engine": engine
@@ -564,8 +581,21 @@ def load_projects_and_conversations():
             "conversation_ids": []
         }
 
-    # Sort projects: active/most populated first
-    projects = sorted(discovered_projects.values(), key=lambda p: len(p["conversation_ids"]), reverse=True)
+    # Sort conversations within each project by updated_at descending
+    for p in discovered_projects.values():
+        p["conversation_ids"].sort(
+            key=lambda cid: discovered_convs[cid].get("updated_at", "") if cid in discovered_convs else "",
+            reverse=True
+        )
+
+    # Sort projects: active/most recently active first
+    def get_proj_sort_key(p):
+        for cid in p["conversation_ids"]:
+            if cid in discovered_convs:
+                return discovered_convs[cid].get("updated_at", "")
+        return ""
+
+    projects = sorted(discovered_projects.values(), key=get_proj_sort_key, reverse=True)
     conversations = discovered_convs
 
     print(f"[Daemon] Organized {len(conversations)} conversations across {len(projects)} workspace folders:")
@@ -691,10 +721,85 @@ async def run_discovery_beacon():
             pass
         await asyncio.sleep(2.5)
 
+# --- Client Tracking & Background Sync Watcher ---
+CONNECTED_CLIENTS = set()
+LAST_TRANSCRIPT_MTIMES = {}
+
+async def broadcast_event(event_dict):
+    if not CONNECTED_CLIENTS:
+        return
+    msg = json.dumps(event_dict)
+    dead_clients = set()
+    for ws in list(CONNECTED_CLIENTS):
+        try:
+            await ws.send(msg)
+        except Exception:
+            dead_clients.add(ws)
+    for ws in dead_clients:
+        CONNECTED_CLIENTS.discard(ws)
+
+async def watch_transcripts_background():
+    """Watches PC Antigravity transcripts and auto-broadcasts updates to connected mobile clients."""
+    print("[Daemon] 👁️ Background transcript watcher active (syncing PC messages to mobile)...")
+    while True:
+        try:
+            await asyncio.sleep(1.5)
+            if not CONNECTED_CLIENTS:
+                continue
+
+            brain_patterns = [
+                os.path.join(ANTIGRAVITY_BRAIN_DIR, "*", ".system_generated", "logs", "transcript.jsonl"),
+                os.path.expanduser("~/.gemini/antigravity-cli/brain/*/.system_generated/logs/transcript.jsonl")
+            ]
+            transcript_files = []
+            for pattern in brain_patterns:
+                transcript_files.extend(glob.glob(pattern))
+
+            changed_conv_ids = []
+            for trans_path in transcript_files:
+                try:
+                    mtime = os.path.getmtime(trans_path)
+                    prev_mtime = LAST_TRANSCRIPT_MTIMES.get(trans_path)
+                    if prev_mtime is not None and mtime > prev_mtime:
+                        brain_dir = os.path.dirname(os.path.dirname(os.path.dirname(trans_path)))
+                        conv_id = os.path.basename(brain_dir)
+                        changed_conv_ids.append(conv_id)
+                    LAST_TRANSCRIPT_MTIMES[trans_path] = mtime
+                except Exception:
+                    pass
+
+            if changed_conv_ids:
+                print(f"[Daemon] 🔄 Detected {len(changed_conv_ids)} modified conversation(s) on PC: {changed_conv_ids}. Syncing with mobile...")
+                load_projects_and_conversations()
+                
+                # Broadcast updated conversation(s)
+                for conv_id in changed_conv_ids:
+                    if conv_id in conversations:
+                        await broadcast_event({
+                            "event": "conversation_updated",
+                            "conversation": conversations[conv_id]
+                        })
+                
+                # Also broadcast updated sorted list
+                sorted_convs = sorted(
+                    list(conversations.values()),
+                    key=lambda c: c.get("updated_at") or c.get("last_message_at") or c.get("created_at") or "",
+                    reverse=True
+                )
+                await broadcast_event({
+                    "event": "conversations_list",
+                    "conversations": sorted_convs
+                })
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Daemon] Watcher error: {e}")
+
 # --- Client Handler ---
 async def handle_client(websocket):
+    CONNECTED_CLIENTS.add(websocket)
     client_ip = websocket.remote_address[0] if websocket.remote_address else "unknown"
-    print(f"\n[Daemon] Mobile client connected from {client_ip}")
+    print(f"\n[Daemon] Mobile client connected from {client_ip} (Pool size: {len(CONNECTED_CLIENTS)})")
 
     # Re-sync on connect
     load_projects_and_conversations()
@@ -729,9 +834,14 @@ async def handle_client(websocket):
         "event": "projects_list",
         "projects": projects
     }))
+    sorted_convs = sorted(
+        list(conversations.values()),
+        key=lambda c: c.get("updated_at") or c.get("last_message_at") or c.get("created_at") or "",
+        reverse=True
+    )
     await websocket.send(json.dumps({
         "event": "conversations_list",
-        "conversations": list(conversations.values())
+        "conversations": sorted_convs
     }))
 
     try:
@@ -753,9 +863,14 @@ async def handle_client(websocket):
                         "event": "projects_list",
                         "projects": projects
                     }))
+                    sorted_convs = sorted(
+                        list(conversations.values()),
+                        key=lambda c: c.get("updated_at") or c.get("last_message_at") or c.get("created_at") or "",
+                        reverse=True
+                    )
                     await websocket.send(json.dumps({
                         "event": "conversations_list",
-                        "conversations": list(conversations.values())
+                        "conversations": sorted_convs
                     }))
 
                 elif action == "browse_dir":
@@ -1442,9 +1557,11 @@ async def handle_client(websocket):
                 pass
             except Exception as e:
                 print(f"[Daemon] Error processing message: {e}")
-
     except Exception as e:
         print(f"[Daemon] Client disconnected: {e}")
+    finally:
+        CONNECTED_CLIENTS.discard(websocket)
+        print(f"[Daemon] Client removed from broadcast pool. Remaining clients: {len(CONNECTED_CLIENTS)}")
 
 # --- Real Antigravity 2.0 CLI Agent Bridge with Session Resume & Vision ---
 async def run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd, image_paths=None):
@@ -1568,12 +1685,12 @@ async def run_antigravity_cli_agent(websocket, conv_id, prompt_text, cwd, image_
             pass
 
     except Exception as e:
-        print(f"[Daemon] agy execution error: {e}")
-        err_msg = f"❌ Antigravity Agent Error: {e}\n"
+        err_msg = f"Error invoking Antigravity agent: {e}"
+        print(f"[Daemon] Agent CLI error: {e}")
         await websocket.send(json.dumps({
             "event": "agent_stream",
             "conversation_id": conv_id,
-            "chunk": err_msg,
+            "chunk": f"\n❌ {err_msg}\n",
             "is_thought": False
         }))
         if conv_id in conversations:
@@ -1620,6 +1737,8 @@ async def main():
         asyncio.create_task(run_discovery_beacon())
     except Exception as e:
         print(f"[Discovery] UDP error: {e}")
+
+    asyncio.create_task(watch_transcripts_background())
 
     async with websockets.serve(handle_client, "0.0.0.0", PORT):
         await asyncio.Future()

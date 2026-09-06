@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../core/network/bridge_client.dart';
@@ -8,6 +9,7 @@ import '../models/conversation.dart';
 class ChatProvider extends ChangeNotifier {
   final BridgeClient bridge;
   final _uuid = const Uuid();
+  Timer? _ticker;
 
   List<Conversation> conversations = [];
   Conversation? activeConversation;
@@ -27,6 +29,27 @@ class ChatProvider extends ChangeNotifier {
         bridge.send('list_conversations', {});
       }
     });
+    // Ticks every 30s so relative times ("2 mins ago", etc.) stay fresh
+    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+      notifyListeners();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  void refresh() {
+    bridge.send('list_conversations', {});
+    if (activeConversation != null) {
+      fetchConversationArtifacts(activeConversation!.id);
+    }
+  }
+
+  void _sortConversations() {
+    conversations.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
   }
 
   void setSourceFilter(ConversationSource? filter) {
@@ -85,7 +108,7 @@ class ChatProvider extends ChangeNotifier {
             .map((c) => Conversation.fromJson(Map<String, dynamic>.from(c)))
             .toList();
 
-        loadedConvs.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        loadedConvs.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
         conversations = loadedConvs;
 
         if (activeConversation != null) {
@@ -122,7 +145,28 @@ class ChatProvider extends ChangeNotifier {
             conversations[index] = conv;
           }
           activeConversation = conv;
+          _sortConversations();
           fetchConversationArtifacts(conv.id);
+          notifyListeners();
+        }
+        break;
+
+      case 'conversation_updated':
+        if (event['conversation'] != null) {
+          final conv = Conversation.fromJson(
+            Map<String, dynamic>.from(event['conversation']),
+          );
+          final index = conversations.indexWhere((c) => c.id == conv.id);
+          if (index == -1) {
+            conversations.insert(0, conv);
+          } else {
+            conversations[index] = conv;
+          }
+          if (activeConversation?.id == conv.id) {
+            activeConversation = conv;
+            fetchConversationArtifacts(conv.id);
+          }
+          _sortConversations();
           notifyListeners();
         }
         break;
@@ -326,6 +370,7 @@ class ChatProvider extends ChangeNotifier {
     activeConversation!.messages.add(userMsg);
     isStreaming = true;
     currentStreamingConvId = activeConversation!.id;
+    _sortConversations();
     notifyListeners();
 
     bridge.send('send_prompt', {
@@ -399,6 +444,7 @@ class ChatProvider extends ChangeNotifier {
         content: chunk,
         timestamp: DateTime.now(),
       ));
+      _sortConversations();
     }
 
     notifyListeners();

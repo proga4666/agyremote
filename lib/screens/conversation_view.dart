@@ -199,26 +199,34 @@ class _ConversationViewState extends State<ConversationView> {
     return Column(
       children: [
         // Engine Origin Pill Header (Antigravity 2.0 vs Desktop IDE)
-        _buildSessionOriginHeader(activeConv),
+        _buildSessionOriginHeader(context, activeConv, chat),
 
         // Active Plan / Walkthrough Top Banner
         if (chat.activePlanArtifact != null || chat.activeWalkthroughArtifact != null)
           _buildActivePlanBanner(context, chat),
 
-        // Message Stream Feed
+        // Message Stream Feed with Pull-To-Refresh
         Expanded(
-          child: ListView.builder(
-            controller: _scrollController,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            itemCount: activeConv.messages.length + (chat.isStreaming ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index < activeConv.messages.length) {
-                final msg = activeConv.messages[index];
-                return _buildMessageBubble(context, msg, chat);
-              } else {
-                return _buildStreamingIndicator();
-              }
+          child: RefreshIndicator(
+            color: AntigravityTheme.googleBlue,
+            backgroundColor: AntigravityTheme.surfaceContainer,
+            onRefresh: () async {
+              chat.refresh();
+              await Future.delayed(const Duration(milliseconds: 400));
             },
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              itemCount: activeConv.messages.length + (chat.isStreaming ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index < activeConv.messages.length) {
+                  final msg = activeConv.messages[index];
+                  return _buildMessageBubble(context, msg, chat);
+                } else {
+                  return _buildStreamingIndicator();
+                }
+              },
+            ),
           ),
         ),
 
@@ -231,7 +239,7 @@ class _ConversationViewState extends State<ConversationView> {
     );
   }
 
-  Widget _buildSessionOriginHeader(Conversation conv) {
+  Widget _buildSessionOriginHeader(BuildContext context, Conversation conv, ChatProvider chat) {
     final isDaemon = conv.isDaemon;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -284,9 +292,53 @@ class _ConversationViewState extends State<ConversationView> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          Text(
-            DateFormat('MMM d, HH:mm').format(conv.createdAt),
-            style: const TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
+          Tooltip(
+            message: 'Last active: ${conv.timeAgo} (${DateFormat('MMM d, HH:mm').format(conv.lastMessageTime)})',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.access_time_rounded, size: 11, color: AntigravityTheme.textMuted),
+                const SizedBox(width: 3),
+                Text(
+                  conv.timeAgo,
+                  style: const TextStyle(fontSize: 10, color: AntigravityTheme.textMuted, fontWeight: FontWeight.w500),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Refresh / Sync Button
+          InkWell(
+            onTap: () {
+              chat.refresh();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Syncing chat messages with host PC...'),
+                  duration: Duration(milliseconds: 900),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: AntigravityTheme.surfaceContainerHigh.withValues(alpha: 0.8),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: AntigravityTheme.borderSubtle),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.sync_rounded, size: 12, color: AntigravityTheme.googleBlue),
+                  SizedBox(width: 3),
+                  Text(
+                    'Sync',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AntigravityTheme.googleBlue),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -474,7 +526,7 @@ class _ConversationViewState extends State<ConversationView> {
                 ),
               ),
               subtitle: Text(
-                '${DateFormat('HH:mm:ss').format(msg.timestamp)} • Chain of Reasoning',
+                '${msg.formattedTime} (${msg.timeAgo}) • Chain of Reasoning',
                 style: const TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
               ),
               children: [
@@ -530,9 +582,29 @@ class _ConversationViewState extends State<ConversationView> {
                 ),
               ),
               const SizedBox(width: 6),
-              Text(
-                DateFormat('HH:mm').format(msg.timestamp),
-                style: const TextStyle(fontSize: 10, color: AntigravityTheme.textMuted),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: AntigravityTheme.surfaceContainerHigh.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: AntigravityTheme.borderSubtle),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.access_time, size: 9, color: AntigravityTheme.textMuted),
+                    const SizedBox(width: 3),
+                    Text(
+                      msg.formattedTime,
+                      style: const TextStyle(fontSize: 10, color: AntigravityTheme.textSecondary, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '• ${msg.timeAgo}',
+                      style: const TextStyle(fontSize: 9.5, color: AntigravityTheme.textMuted),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -563,7 +635,7 @@ class _ConversationViewState extends State<ConversationView> {
             ),
 
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.88,
             ),
@@ -576,27 +648,44 @@ class _ConversationViewState extends State<ConversationView> {
                     : AntigravityTheme.border,
               ),
             ),
-            child: MarkdownBody(
-              data: msg.content,
-              selectable: true,
-              styleSheet: MarkdownStyleSheet(
-                p: const TextStyle(color: AntigravityTheme.textPrimary, fontSize: 13, height: 1.45),
-                code: const TextStyle(
-                  backgroundColor: Color(0xFF0F1011),
-                  color: AntigravityTheme.googleGreen,
-                  fontFamily: 'monospace',
-                  fontSize: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                MarkdownBody(
+                  data: msg.content,
+                  selectable: true,
+                  styleSheet: MarkdownStyleSheet(
+                    p: const TextStyle(color: AntigravityTheme.textPrimary, fontSize: 13, height: 1.45),
+                    code: const TextStyle(
+                      backgroundColor: Color(0xFF0F1011),
+                      color: AntigravityTheme.googleGreen,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                    codeblockDecoration: BoxDecoration(
+                      color: const Color(0xFF0B0C0E),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AntigravityTheme.borderSubtle),
+                    ),
+                    h1: const TextStyle(color: AntigravityTheme.googleBlue, fontSize: 16, fontWeight: FontWeight.bold),
+                    h2: const TextStyle(color: AntigravityTheme.googleBlue, fontSize: 14, fontWeight: FontWeight.bold),
+                    h3: const TextStyle(color: AntigravityTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
+                    listBullet: const TextStyle(color: AntigravityTheme.googleBlue),
+                  ),
                 ),
-                codeblockDecoration: BoxDecoration(
-                  color: const Color(0xFF0B0C0E),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AntigravityTheme.borderSubtle),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: Text(
+                    msg.formattedTime,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      color: AntigravityTheme.textMuted.withValues(alpha: 0.7),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
                 ),
-                h1: const TextStyle(color: AntigravityTheme.googleBlue, fontSize: 16, fontWeight: FontWeight.bold),
-                h2: const TextStyle(color: AntigravityTheme.googleBlue, fontSize: 14, fontWeight: FontWeight.bold),
-                h3: const TextStyle(color: AntigravityTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
-                listBullet: const TextStyle(color: AntigravityTheme.googleBlue),
-              ),
+              ],
             ),
           ),
 

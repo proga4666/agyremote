@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../models/conversation.dart';
@@ -86,6 +85,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+          // Sync with PC Button
+          IconButton(
+            icon: const Icon(Icons.sync_rounded, color: AntigravityTheme.googleBlue, size: 20),
+            tooltip: 'Sync with PC',
+            onPressed: () {
+              chatProvider.refresh();
+              projProvider.fetchProjects();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Synced chats & projects with host PC'),
+                  duration: Duration(milliseconds: 900),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
           // New Conversation Button
           IconButton(
             icon: const Icon(Icons.add_comment_outlined, color: AntigravityTheme.googleGreen, size: 20),
@@ -119,6 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   break;
                 case 'refresh':
                   projProvider.fetchProjects();
+                  chatProvider.refresh();
                   break;
               }
             },
@@ -611,11 +627,25 @@ class _HomeScreenState extends State<HomeScreen> {
                                                     ),
                                                   ),
                                                 ),
+                                                const SizedBox(width: 6),
+                                                Text(
+                                                  c.timeAgo,
+                                                  style: const TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w500,
+                                                    color: AntigravityTheme.textMuted,
+                                                  ),
+                                                ),
                                               ],
                                             ),
-                                            subtitle: Text(
-                                              '${c.messages.length} msgs • ${c.sourceLabel} • ${DateFormat('MMM d, HH:mm').format(c.createdAt)}',
-                                              style: const TextStyle(fontSize: 9.5, color: AntigravityTheme.textMuted),
+                                            subtitle: Padding(
+                                              padding: const EdgeInsets.only(top: 2),
+                                              child: Text(
+                                                c.lastMessageSnippet,
+                                                style: const TextStyle(fontSize: 10.5, color: AntigravityTheme.textMuted),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
                                             ),
                                             trailing: convs.length > 1
                                                 ? IconButton(

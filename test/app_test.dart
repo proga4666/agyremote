@@ -102,6 +102,43 @@ void main() {
       expect(ideConv.sourceLabel, 'Desktop IDE');
     });
 
+    test('Conversation and ConversationMessage time formatting (timeAgo & formattedTime)', () {
+      final now = DateTime.now();
+
+      // formatTimeAgo unit tests
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(seconds: 10))), 'just now');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(minutes: 1))), '1 min ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(minutes: 2))), '2 mins ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(hours: 1))), '1 hour ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(hours: 3))), '3 hours ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 1))), 'yesterday');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 4))), '4 days ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 7))), '1 week ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 14))), '2 weeks ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 35))), '1 month ago');
+      expect(Conversation.formatTimeAgo(now.subtract(const Duration(days: 370))), '1 year ago');
+
+      // ConversationMessage time properties
+      final msg = ConversationMessage.fromJson({
+        'id': 'm_time_test',
+        'sender': 'user',
+        'content': 'Test prompt',
+        'timestamp': now.subtract(const Duration(minutes: 5)).toIso8601String(),
+      });
+      expect(msg.formattedTime.isNotEmpty, true);
+      expect(msg.timeAgo, '5 mins ago');
+
+      // Conversation lastMessageTime and timeAgo
+      final conv = Conversation(
+        id: 'c_time',
+        projectId: 'p1',
+        title: 'Time Test',
+        messages: [msg],
+      );
+      expect(conv.timeAgo, '5 mins ago');
+      expect(conv.lastMessageSnippet, 'Test prompt');
+    });
+
     test('BrainArtifact and DaemonStatusInfo parsing', () {
       final art = BrainArtifact.fromJson({
         'name': 'implementation_plan.md',
